@@ -11,6 +11,7 @@ match the tone of the scene
 3- Rim simulates rim lighting around objects
 
 4- FastSharp as the name says, is a simple and fast adaptive sharpening filter
+
 5- SlowSharp is more of an artistic effect rathen than a utility. You can
 change the width of the filter to whatever you want. Beware of performance cost tho...
 
