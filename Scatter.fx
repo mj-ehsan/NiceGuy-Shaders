@@ -1,3 +1,7 @@
+//Scatter
+//Written by MJ_Ehsan for Reshade
+//Version 1.1
+
 //credits:
 //the noise2d function is converted from shadertoy to work with reshade
 //original code: https://www.shadertoy.com/view/lldBRn
@@ -16,11 +20,11 @@
 //TO DO
 //1-  [v]fix reflection blending in bright areas and when the reflection is darker than the surface color
 //2-  [v]adaptive spatial blur depending on the number of blended frames using deghosting mask
-//3-  [x]add blending options such as exposure, gamma, and saturation
-//4-  [ ]inverse tonemapping for reflections to make fireflies more effective in the spatially
+//3-  [v]add blending options such as exposure, gamma, and saturation
+//4-  [v]inverse tonemapping for reflections to make fireflies more effective in the spatially
 //       denoised image(Yes! they're needed)
 //5-  [v]mip generation for history rejection fixing after Temporal Accumulator
-//6-  [x]reprojection using optical flow
+//6-  [v]reprojection using DRME
 //7-  [v]rewriting ui
 //8-  [x]fixing gi mode - Removed feature, May add again in the future
 //9-  [v]fixing Temporal Accumulator clmaping (It's now using the same clmaping factor as the Temporal Stabilizer)
@@ -30,14 +34,15 @@
 //13- [v]optimizing blur passes by dividing the sampling area to the number of iterations
 //14- [o]any possible optimization is welcome 
 //15- [v]finding a good looking default setting for the ui
-//16- [ ]adding temporal infinite bounces to the SSR
+//16- [v]adding temporal infinite bounces to the SSR
+//		[ ]1- fix sea wave effect when infinite bounce is enabled!
 //17- [x]add sky masking after denoiser
 //18- [v]add debug view for :
 //		[v]1- reflection //needs rewrite
 //		[v]2- roughness
-//19- [ ]add the option to disable denoiser passes individually
+//19- [x]add the option to disable denoiser passes individually
 //20- [v]fix deghosting threshold. It gives a value higher than 0 even with a completely still image!
-//21- [ ]moving blur quality from uniform variables to preprocessor defenitions or making it conditional depending on API
+//21- [v]moving blur quality from uniform variables to preprocessor defenitions or making it conditional depending on API
 //	   Blur quality is used as a condition state in loops. But uniform variables are not good for DX9 and older
 //22- [v]fixing temporal accumulator only accumulating 2 frames! (fixed. know it can accumulate infinite amount of frames)
 //23- [ ]Changing the median filter (PreBlur) to something that conserves the energy
@@ -46,10 +51,15 @@
 
 #include "ReShadeUI.fxh"
 #include "ReShade.fxh"
+#include "MotionVectors.fxh"
 
 uniform float Timer < source = "timer"; >;
 
 #define pix float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
+
+#ifndef BLUR_QUALITY
+ #define BLUR_QUALITY 8
+#endif
 
 ///////////////Include/////////////////////
 ///////////////Textures-Samplers///////////
@@ -60,11 +70,11 @@ sampler sTexColor {Texture = TexColor; SRGBTexture = false;};
 texture TexDepth : DEPTH;
 sampler sTexDepth {Texture = TexDepth;};
 
-texture2D NormalTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 3; };
+texture2D NormalTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
 sampler sNormalTex {Texture = NormalTex; };
 
-texture2D FrameDiffTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 3; };
-sampler sFrameDiffTex {Texture = FrameDiffTex; };
+//texture2D FrameDiffTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
+//sampler sFrameDiffTex {Texture = FrameDiffTex; };
 
 texture2D RoughnessTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = R8;};
 sampler sRoughnessTex {Texture = RoughnessTex;};
@@ -82,31 +92,32 @@ texture2D TAColorTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG
 sampler sTAColorTex {Texture = TAColorTex; };
 
 //temporal stabilizer
-texture2D TSTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
-sampler sTSTex {Texture = TSTex; };
+//texture2D TSTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
+//sampler sTSTex {Texture = TSTex; };
 
 texture2D TSTex1 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
 sampler sTSTex1 {Texture = TSTex1; };
 
 //temporal accumulator
-texture2D TATex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
-sampler sTATex {Texture = TATex; };
+//texture2D TATex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
+//sampler sTATex {Texture = TATex; };
 
-texture2D TATex2 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 5; };
+texture2D TATex2 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 8; };
 sampler sTATex2 {Texture = TATex2; };
 
 //SSR
-texture2D SSR_RayLength	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT;	Format = R16f; };
-sampler2D sSSR_RayLength	{Texture = SSR_RayLength;};
+//texture2D SSR_RayLength	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT;	Format = R16f; };
+//sampler2D sSSR_RayLength	{Texture = SSR_RayLength;};
 
-texture2D SSR_ColorTex 	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; AddressU = MIRROR;};
-sampler2D sSSR_ColorTex	{ Texture = SSR_ColorTex;	};
+//texture2D SSR_ColorTex 	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; AddressU = MIRROR;};
+//sampler2D sSSR_ColorTex	{ Texture = SSR_ColorTex;	};
 
 ///////////////Textures-Samplers///////////
 ///////////////UI//////////////////////////
 
 uniform int Hints<
 	ui_text = 
+		"Strongly recommended to use with DRME(MotionEstimation.fx)\n"
 		"This shader is supposed to be used with qUINT_SSR and or DH_RTGI\n"
 		"The roughness category should only be used when using qUINT_SSR\n"
 		"If you are only using DH_RTGI, then set (Variation Frequency) to\n"
@@ -119,7 +130,7 @@ uniform int Hints<
 		"Recommended settigns for qUINT_SSR:\n"
 		"Filtering and Details >\n"
 		"Filter Kernel Size : 0.5\n"
-		"Surface Relief Height : 1.000\n"
+		"Surface Relief Height : 1.00\n"
 		"Surface Relief Scale : 0.35\n\n"
 		
 		"Download DH_RTGI : https://github.com/mj-ehsan/dh-reshade-shaders\n"
@@ -171,23 +182,25 @@ uniform float2 torough <
 				 "2nd one: Darkens the bright pixels.";
 > = float2( 0.1, 1);
 
-uniform float BlendFactor <
+/*uniform float BlendFactor <
 	ui_type = "slider";
 	ui_category = "Temporal Stabilizer";
 	ui_category_closed = true;
 	ui_label = "Power";
 	ui_max = 0.99;
-	ui_tooltip = "More = More stable image and potentially more ghosting artifact";
-> = 0.8;
+	ui_tooltip = "More = More stable image and potentially more ghosting artifact\n0 by default";
+> = 0.0;*/
+static const float BlendFactor = 0;
 
-uniform float Deghost <
+/*uniform float Deghost <
 	ui_type = "slider";
 	ui_category = "Temporal Stabilizer";
 	ui_category_closed = true;
 	ui_label = "Deghosting Power";
 	ui_max = 5;
 	ui_tooltip = "Reduces Temporal Stabilizer artifacts";
-> = 2.5;
+> = 2.5;*/
+static const float Deghost = 0;
 
 uniform float color_threshold1 <
 	ui_label = "Color Threshold";
@@ -197,7 +210,7 @@ uniform float color_threshold1 <
 	ui_category_closed = true;
 	ui_min = 0;
 	ui_max = 1;
-> = 0.25;
+> = 0.4;
 
 uniform float normal_threshold1 <
 	ui_label = "Normal Threshold";
@@ -206,8 +219,8 @@ uniform float normal_threshold1 <
 	ui_category = "Temporal Accumulator";
 	ui_category_closed = true;
 	ui_min = 0;
-	ui_max = 30;
-> = 8;
+	ui_max = 4;
+> = 2.5;
 
 uniform float color_threshold <
 	ui_label = "Color Threshold";
@@ -216,8 +229,8 @@ uniform float color_threshold <
 	ui_category = "Spatial Denoiser";
 	ui_category_closed = true;
 	ui_min = 0;
-	ui_max = 1;
-> = 0.21;
+	ui_max = 0.2;
+> = 0.005;
 
 uniform float normal_threshold <
 	ui_label = "Normal Threshold";
@@ -227,7 +240,7 @@ uniform float normal_threshold <
 	ui_category_closed = true;
 	ui_min = 0;
 	ui_max = 0.2;
-> = 0.0125;
+> = 0.005;
 
 uniform float radius <
 	ui_label = "Blur Radius";
@@ -236,19 +249,7 @@ uniform float radius <
 	ui_type = "slider";
 	ui_category_closed = true;
 	ui_max = 300;
-> = 175;
-
-//uniform float rlength <
-//	ui_label = "Ray Length Adaptation";
-//	ui_tooltip = "Reduces the blur radius when the reflector\nsurface and the refleced surface are near.\n"
-//				 "More = More detailed Reflection\nLess = More consistent denoising\n"
-//				 "Set to 0 if using default SSR shader. Set Refinement Steps in SSR to 0 if using the custom one";
-//	ui_type = "slider";
-//	ui_category = "Spatial Denoiser";
-//	ui_category_closed = true;
-//	ui_min = 0;
-//	ui_max = 100;
-//> = 5;
+> = 40;
 
 uniform int debug <
 	ui_label = "Debug Mode";
@@ -264,6 +265,19 @@ uniform float Exposure <
 	ui_type = "slider";
 	ui_max = 2;
 > = 1;
+
+uniform bool infinitebounce <
+	ui_category = "Extra";
+	ui_type = "radio";
+	ui_label = "(EXPERIMENTAL!)infinite bounce";
+> = 0;
+
+uniform bool GI <
+	ui_label = "GI mode";
+	ui_category = "Extra";
+	ui_type = "radio";
+	ui_tooltip = "Turn on if you want to use Scatter only with DH_RTGI";
+> = 0;
 
 ///////////////UI//////////////////////////
 ///////////////Functions///////////////////
@@ -347,7 +361,20 @@ void MedianVS(in uint ID : SV_VertexID, out float4 Position : SV_Position, out f
 //saves a copy of backbuffer before adding grain and further effects
 float3 ogcolor( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
-	return tex2D(sTexColor, texcoord).rgb; //OGColorTex
+	float3 color   = tex2D(sTexColor, texcoord).rgb;
+	
+	if(infinitebounce == 1)
+	{
+		float3 pastSSR = tex2D(sTSTex1, texcoord).rgb;
+			   pastSSR   = pastSSR / ( 1 - pastSSR); //tonemap
+		float3 X = color - (pastSSR -0.5);
+			   color = X - pastSSR;
+		return color + pastSSR; //OGColorTex
+	}
+	else
+	{
+		return color;
+	}
 }
 
 void TA_Color(in float4 Position : SV_Position, in float2 texcoord : TEXCOORD0, out float4 OutputColor : SV_Target0)
@@ -416,7 +443,7 @@ float3 roughness( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : 
 //produces a noise texture
 float3 noise( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
-	float3 color = tex2D(sTexColor, texcoord).rgb;
+	float3 color = tex2D(sOGColorTex, texcoord).rgb;
 	
 	float t = Timer;
 	float2 uv = texcoord;
@@ -432,7 +459,7 @@ float3 noise( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_T
 //blends the noise into the image
 void noiseblend(float4 Position : SV_Position, float2 texcoord : TEXCOORD, out float3 noisy : SV_Target0) //noisy image
 {
-	float3 color = tex2D(sTexColor, texcoord).rgb;
+	float3 color = tex2D(sOGColorTex, texcoord).rgb;
 	
 	float3 noise1 = tex2D(sNoiseTex, texcoord).rgb;
 	
@@ -500,19 +527,23 @@ float4 MedianPS(in float4 Position : SV_Position, in float4 Offsets[3] : TEXCOOR
     return Med9(Sample[0], Sample[1], Sample[2], //TASSRTex
                 Sample[3], Sample[4], Sample[5],
                 Sample[6], Sample[7], Sample[8]);
-    //return tex2D(sTexColor, Offsets[1].xy);
+    //return tex2D(sNoiseTex, Offsets[1].xy);
 }
 
 float4 TA( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
+	float2 velocity = sampleMotion(texcoord).xy;
 	float roughness = tex2D(sRoughnessTex, texcoord).r;
+	
 	float4 current = tex2D( sTASSRTex, texcoord ).rgba;
-	float4 history = tex2D( sTSTex1, texcoord).rgba;
+	float4 history = tex2D( sTSTex1, texcoord + velocity).rgba;
+	
 	float3 diff = abs(current.rgb - history.rgb);
 	float diffmax = max(max(diff.r, diff.g), diff.b) * color_threshold1;	
 	
-	float3 PastNorm = tex2D( sNormalTex, texcoord ).rgb;
+	float3 PastNorm = tex2D( sNormalTex, texcoord + velocity ).rgb;
 	float3 CurrNorm = GetNormal( texcoord );
+	
 	float3 ndiff = abs(CurrNorm.xyz - PastNorm.xyz);
 	float ndiffmax = max(max(ndiff.r, ndiff.g), ndiff.b) * normal_threshold1;
 	
@@ -520,7 +551,7 @@ float4 TA( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
 	ndiffmax *= 10 * (1-roughness);
 	
 	return float4(lerp( history.rgb, current.rgb, saturate( 1 / ( history.a + 1 ) + ndiffmax)), history.a + 1); //TATex2
-}
+} //TATex2
 
 float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 {
@@ -529,10 +560,10 @@ float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 	float2 Alpha = float2(tex2D(sTATex2, texcoord).a, 1);
 	float NormalG = dot(0.333, GetNormal(texcoord));
 	
-	float rlength = 1;
-	float Raylength = saturate( tex2D( sSSR_RayLength, texcoord ).r/rlength);
-	float alphaR = clamp( 4 - Alpha.r, 0, 4);
-	float Roughness = tex2D( sRoughnessTex, texcoord).r * Raylength + alphaR;
+	float alphaR = clamp( 64 - Alpha.r, 0, 64);
+	alphaR = min(8-Alpha.r, 0);
+	float Roughness = tex2D( sRoughnessTex, texcoord).r;
+	if (GI==1){Roughness=1;}
 	
 	// "HISTORY FIX" pass is combined with the "BLUR" pass for performance reasons
 	float4 Color = float4( tex2Dlod( sTATex2, float4(texcoord, 0, alphaR)).rgb, 1); //The output of the Temporal Accumulator
@@ -540,7 +571,7 @@ float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 	
 	//noise2d result is not random enough so I had to do it 3 times!
 	float seed = noise2d(noise2d(noise2d(texcoord.xy)));
-	int iteration = 8;
+	int iteration = BLUR_QUALITY;
 	for (int i = 1; i <= iteration; i++)
 	{
 		float distance = float(i + seed)/iteration;
@@ -556,7 +587,7 @@ float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 		
 		//jittered SSR Color
 		float4 JCol = float4( tex2Dlod( sTATex2, float4(texcoord + offset, 0, alphaR)).rgb, 1);	
-		float2 JAlpha = float2(tex2D(sTATex2, texcoord).a, 1);
+		float2 JAlpha = float2(tex2Dlod(sTATex2, float4(texcoord, 0, alphaR)).a, 1);
 		//jittered original Color. To be used as a determinator
 
 		float JNormalG = dot(0.333, GetNormal(texcoord + offset ).xyz);
@@ -585,10 +616,10 @@ void PostBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 	Color2.a = 1;
 	
 	float NormalG = dot(0.333, GetNormal(texcoord));
-	float Radius = dot(0.333, 2 * radius * abs(Color2-Color));
+	float Radius = dot(0.333, 8 * radius * abs(Color2-Color));
 		
 	float seed = noise2d(noise2d(noise2d(texcoord.xy))	);
-	int iteration = 8;
+	int iteration = BLUR_QUALITY;
 	for (int i = 1; i <= iteration; i++)
 	{
 		float distance = float(i + seed)/iteration;
@@ -599,7 +630,7 @@ void PostBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 
 		float2 offset; sincos(ang, offset.y, offset.x); 
 		offset *= sqrt(distance);
-		offset *= p.xy * Radius	;
+		offset *= p.xy * Radius;
 		
 		float4 JCol   = float4( tex2D( sNoiseTex, texcoord + offset ).rgb, 1);
 		float2 JAlpha = float2(tex2D(sTATex2, texcoord).a, 1);	
@@ -619,16 +650,17 @@ void PostBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 	Normal = GetNormal(texcoord); //NormalTex
 }	
 
-float4 TemporalStabilizer(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
-{// Copy backbuffer to a that continuously blends with its previous result
-	float3 FrameDiff =  abs(tex2D(sFrameDiffTex, texcoord).rgb);
-	
-	float FD_Gray = max(max(FrameDiff.r, FrameDiff.g), FrameDiff.b);
-	FD_Gray = saturate(1 - FD_Gray * Deghost * 50);
-	//FD_Gray = (FD_Gray > 1 - Deghost) ? 0 : 1;
-	
-    return float4(tex2D(sTSTex1, texcoord).rgb, saturate(BlendFactor*(FD_Gray))); //TSTex
-}
+//float4 TemporalStabilizer(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
+//{// Copy backbuffer to a that continuously blends with its previous result
+//	float2 velocity = sampleMotion(texcoord).xy;
+//	float3 FrameDiff =  abs(tex2D(sFrameDiffTex, texcoord).rgb);
+//	
+//	float FD_Gray = max(max(FrameDiff.r, FrameDiff.g), FrameDiff.b);
+//	FD_Gray = saturate(1 - FD_Gray * Deghost * 50);
+//	//FD_Gray = (FD_Gray > 1 - Deghost) ? 0 : 1;
+//	
+//    return float4(tex2D(sTSTex1, texcoord).rgb, saturate(BlendFactor*(FD_Gray))); //TSTex
+//}
 
 
 
@@ -643,7 +675,7 @@ float4 TemporalStabilizer(float4 vpos : SV_Position, float2 texcoord : TexCoord)
 //Blends the denoised SSR with the image again
 float3 Blend(float4 Position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
-	float3 color = tex2D(sTSTex, texcoord).rgb; //reflection only
+	float3 color = tex2D(sTSTex1, texcoord).rgb; //reflection only
 	color = color / ( 1 - color); //tonemapped. inverse tonemapping was done in SSRDebug pass
 	float3 ogcolor = tex2D(sOGColorTex, texcoord).rgb;
 	float3 col = ogcolor-((color)-0.5);
@@ -667,11 +699,6 @@ float3 Blend(float4 Position : SV_Position, float2 texcoord : TEXCOORD) : SV_Tar
 	{
 		col = Roughness;
 	}
-	else if ( debug == 2 ) //ray length in 0-1 range
-	{
-		float rlength = 1;
-		col = tex2D( sSSR_RayLength, texcoord ).rrr/rlength;
-	}
 	return col;
 }
 
@@ -680,12 +707,15 @@ float3 Blend(float4 Position : SV_Position, float2 texcoord : TEXCOORD) : SV_Tar
 
 technique Scatter1
 < ui_label = "Scatter Top";
-  ui_tooltip = "||This shader is intended to be used with qUINT_SSR and or DH_RTGI||\n"
-			   "It adds roughness to SSR and an advanced denoiser to both\n"
-			   "Use the shader like this:\n"
-			   "1- SSR Companion Top\n"
-			   "2- SSR and or DH_RTGI\n"
-			   "4- SSR Companion Buttom"; >
+  ui_tooltip = "                             Scatter FX                             \n"
+  			 "                          ||By Ehsan2077||                          \n"
+			   "||This shader is intended to be used with qUINT_SSR and or DH_RTGI||\n"
+			   "|It adds roughness to SSR and an advanced denoiser to both         |\n"
+			   "|Use the shader like this:                                         |\n"
+			   "|1- SSR Companion Top                                              |\n"
+			   "|2- SSR and or DH_RTGI                                             |\n"
+			   "|4- SSR Companion Buttom                                           |\n"
+			   "|(optional-Extremely recommended) Put DRME(MotionVectors.fx) on top|";>
 {
 	pass OGColor
 	{
@@ -693,12 +723,12 @@ technique Scatter1
 		PixelShader = ogcolor;
 		RenderTarget = OGColorTex;
 	}
-    pass FrameDiff
-    {
-    	VertexShader = PostProcessVS;
-    	PixelShader = FrameDiff;
-    	RenderTarget = FrameDiffTex;
-    }
+    //pass FrameDiff
+    //{
+    //	VertexShader = PostProcessVS;
+    //	PixelShader = FrameDiff;
+    //	RenderTarget = FrameDiffTex;
+    //}
     pass TA_Color
     {
         VertexShader = PostProcessVS;
@@ -727,12 +757,15 @@ technique Scatter1
 
 technique Scatter
 < ui_label = "Scatter Buttom";
-  ui_tooltip = "||This shader is intended to be used with qUINT_SSR and or DH_RTGI||\n"
-			   "It adds roughness to SSR and an advanced denoiser to both\n"
-			   "Use the shader like this:\n"
-			   "1- SSR Companion Top\n"
-			   "2- SSR and or DH_RTGI\n"
-			   "4- SSR Companion Buttom"; >
+  ui_tooltip = "                             Scatter FX                             \n"
+  			 "                          ||By Ehsan2077||                          \n"
+			   "||This shader is intended to be used with qUINT_SSR and or DH_RTGI||\n"
+			   "|It adds roughness to SSR and an advanced denoiser to both         |\n"
+			   "|Use the shader like this:                                         |\n"
+			   "|1- SSR Companion Top                                              |\n"
+			   "|2- SSR and or DH_RTGI                                             |\n"
+			   "|4- SSR Companion Buttom                                           |\n"
+			   "|(optional-Extremely recommended) Put DRME(MotionVectors.fx) on top|";>
 {
 	pass NoiseRemove
 	{
@@ -771,17 +804,16 @@ technique Scatter
 		RenderTarget0 = TSTex1;
 		RenderTarget1 = NormalTex;
 	}
-	pass TemporalStab
-    {
-        VertexShader = PostProcessVS;
-        PixelShader = TemporalStabilizer;
-        RenderTarget0 = TSTex;
-        ClearRenderTargets = FALSE;
-        BlendEnable = TRUE;
-        BlendOp = ADD;
-        SrcBlend = INVSRCALPHA;
-        DestBlend = SRCALPHA;
-    }
+	//pass TemporalStab
+    //{
+    //    VertexShader = PostProcessVS;
+    //    PixelShader = TemporalStabilizer;
+    //    RenderTarget0 = TSTex;
+    //    BlendEnable = TRUE;
+    //    BlendOp = ADD;
+    //    SrcBlend = INVSRCALPHA;
+    //    DestBlend = SRCALPHA;
+    //}
     //Denoiser Passes end
     pass Blend
     {
