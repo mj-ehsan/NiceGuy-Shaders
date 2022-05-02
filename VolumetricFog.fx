@@ -1,6 +1,6 @@
 //VolumetricFog
 //Written by MJ_Ehsan for Reshade
-//Version 1.0
+//Version 1.1
 
 //license
 //CC0 ^_^
@@ -13,11 +13,12 @@
 #define pix float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
 
 #ifndef MAX_MIPSLEVELS_
- #define MAX_MIPSLEVELS_ 4
+ #define MAX_MIPSLEVELS_ 2
 #endif
 
-#if MAX_MIPSLEVELS_ > 11
- #define MAX_MIPSLEVELS_ 11
+#if MAX_MIPSLEVELS_ > 10
+ #undef MAX_MIPSLEVELS_
+ #define MAX_MIPSLEVELS_ 10
 #endif
 
 uniform float Timer < source = "timer"; >;
@@ -28,11 +29,11 @@ uniform float Timer < source = "timer"; >;
 texture2D TexColor : COLOR;
 sampler  sTexColor {Texture = TexColor; };
 
-texture2D FogTex { Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RGBA8; MipLevels = MAX_MIPSLEVELS_;};
+texture2D FogTex { Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RGBA8;};
 sampler2D sFogTex { Texture = FogTex;};
 
-texture2D CommonTex0 	{ Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RGBA8; };
-sampler2D sCommonTex0	{ Texture = CommonTex0;	};
+texture2D BlurTex 	{ Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RGBA8; MipLevels = MAX_MIPSLEVELS_+1; };
+sampler2D sBlurTex	{ Texture = BlurTex;	};
 
 ///////////////Textures-Samplers///////////
 ///////////////UI//////////////////////////
@@ -55,7 +56,7 @@ uniform int SampleCount <
 	ui_min = 1;
 	ui_type = "slider";
 	ui_category = "Blurring";
-> = 2;
+> = 8;
 
 uniform bool TemporalAccum <
 	ui_type = "radio";
@@ -95,24 +96,8 @@ uniform float Gamma <
 	ui_category = "Blending";
 > = 1;
 
-uniform int DenoiseQ <
-	ui_type = "slider";
-	ui_label = "Denoiser Power";
-	ui_tooltip = "Actual denoising power is 2^(Denoising Power).\n"
-				 "If you want more(?!) increase MAX_MIPLEVELS_\n"
-				 "preprocessor definition. After setting this\n"
-				 "Set MAX_MIPLEVELS_ equal to this to save performance.";
-	ui_max = MAX_MIPSLEVELS_;
-> = 2;
-
-uniform bool HQDenoise <
-	ui_label = "Bilateral Upscaling";
-	ui_tooltip = "Reduces artifacts caused by denoised and\n"
-				 "increases denoising power for a low performance cost";
-> = 1;
-
 //uniform bool Shadow <> = 0;
-static const bool Shadow = 0;
+//static const bool Shadow = 0;
 
 
 ///////////////UI//////////////////////////
@@ -126,7 +111,7 @@ float noise(float2 co)
 float3 noise3dts(float2 co, int s, bool t)
 {
 	co += sin(Timer/64)*t;
-	co += s/3.1415926535;
+	co += frac(s/3.1415926535);
 	return float3( noise(co), noise(co+0.6432168421), noise(co+0.19216811));
 }
 
@@ -142,22 +127,23 @@ float3 Fog( float4 Postion : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
 	
 	float4 color = float4(tex2D(sTexColor, texcoord).rgb,1);
 	float4 S = color;
-	int iteration = radius*SampleCount/8;
-	float Radius = depth*radius;
-
+	float Radius = sqrt(depth)*radius;
+	uint iteration = Radius*SampleCount/8;
 	
 	for (int i = 1; i <= iteration; i++)
 	{	
-		float seed = noise3dts( texcoord.xy, i, TemporalAccum).r;
-		float distance = float(i + seed)/iteration;
-		float ang = frac(seed + i * 0.6180339887498) * 3.1415927 * 2.0;
+		float2 seed = noise3dts( texcoord.xy, i, TemporalAccum).rg;	
+		//float distance = (i + seed.x)/iteration;
+		float distance = seed.x;
+		//float ang = frac(seed.x + i * 0.6180339887498) * 3.1415927 * 2.0;
+		float ang = ((i + seed.y) / iteration) * 3.14159265 * 2;
 		
 		float2 offset; sincos(ang, offset.y, offset.x); 
 		offset *= sqrt(distance);
-		offset *= p.xy * radius;
+		offset *= p.xy * Radius;
 		
 		float Jdepth =  ReShade::GetLinearizedDepth(texcoord + offset).r;
-		if( Jdepth >= depth)
+		if( Jdepth >= depth -0.01)
 		{
 			S += float4( tex2Dlod( sTexColor, float4(texcoord + offset,0,0)).rgb, 1);
 		}
@@ -165,35 +151,67 @@ float3 Fog( float4 Postion : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
 
 	S.rgb /= S.a;
 	
-	S = pow( abs(S), Gamma)*Exposure;
 	float coeff = min( depth*Intensity, MaxIntensity);
-	if(Shadow) S = lerp(S, S * saturate(tex2D(sCommonTex0, texcoord)), min((1-depth)*Intensity, 1));
+	//if(Shadow) S = lerp(S, S * saturate(tex2D(sCommonTex0, texcoord)), min((1-depth)*Intensity, 1));
 	
+	return S.rgb;
+}
 
+float3 Blur( float4 Postion : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
+{
+	float depth = ReShade::GetLinearizedDepth(texcoord);
+	float2 p = pix;
+	
+	float4 color = float4(tex2D(sFogTex, texcoord).rgb,1);
+	float4 S = color;
+
+	float Radius = radius/16;
+	uint iteration = max(SampleCount, 2); //iteration = 0;
+	
+	for (int i = 1; i <= iteration; i++)
+	{	
+		float2 seed = noise3dts( texcoord.xy + 0.33463545721, i, TemporalAccum).rg;
 		
-	//return lerp( color.rgb, S.rgb, coeff);
+		float distance = seed.x;
+		float ang = ((i + seed.y) / iteration) * 3.14159265 * 2;
+		
+		float2 offset; sincos(ang, offset.y, offset.x); 
+		offset *= sqrt(distance);
+		offset *= p.xy * Radius;
+		
+		float Jdepth =  ReShade::GetLinearizedDepth(texcoord + offset).r;
+		if( Jdepth >= depth -0.01)
+		{
+			S += float4( tex2Dlod( sFogTex, float4(texcoord + offset,0,0)).rgb, 1);
+		}
+	}
+
+	S.rgb /= S.a;
+	S = pow( abs(S), Gamma)*Exposure;
 	return S.rgb;
 }
 
 float3 Blend( float4 Postion : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
 	float depth = ReShade::GetLinearizedDepth(texcoord);
-	uint lod = DenoiseQ;
-	float2 p = pix; p *= pow(2, lod);
+	float2 p = pix; p *= pow(2, MAX_MIPSLEVELS_);
 	
-	float4 fog; fog.a = 1; fog.rgb = tex2Dlod(sFogTex, float4(texcoord,0,lod)).rgb;
+	float4 fog; fog.a = 1; fog.rgb = tex2Dlod(sBlurTex, float4(texcoord,0,MAX_MIPSLEVELS_)).rgb;
 	
-	float2 offset[4] =
-	{ float2(0,p.y), float2(p.x,0), float2(0,-p.y), float2(-p.x,0) };
+	float2 offset[8] =
+	{
+		float2(  0, p.y), float2( p.x,  0), float2(   0, -p.y), float2(-p.x,    0),
+		float2(p.x, p.y), float2(-p.x,p.y), float2(-p.x, -p.y), float2( p.x, -p.y)
+	};
 	
 	
-	if(HQDenoise)
+	if( MAX_MIPSLEVELS_ != 0)
 	{
 		float4 FogSample; FogSample.a = 1;
 		float3 DepthSample;
-		for(int i; i<4; i++)
+		for(int i; i<8; i++)
 		{
-			FogSample.rgb = tex2Dlod(sFogTex, float4(texcoord + offset[i], 0, lod)).rgb;
+			FogSample.rgb = tex2Dlod(sBlurTex, float4(texcoord + offset[i]/2, 0, MAX_MIPSLEVELS_)).rgb;
 			DepthSample = ReShade::GetLinearizedDepth(texcoord + offset[i]*1.5);
 			if( abs( DepthSample.x - depth.x) < 0.01) fog += FogSample;
 		}
@@ -222,6 +240,12 @@ technique VolumetricFog <
 		VertexShader = PostProcessVS;
 		PixelShader = Fog;
 		RenderTarget = FogTex;
+	}
+	pass
+	{
+		VertexShader = PostProcessVS;
+		PixelShader = Blur;
+		RenderTarget = BlurTex;
 	}
 	pass
 	{		
