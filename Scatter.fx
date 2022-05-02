@@ -130,7 +130,7 @@ uniform int Hints<
 		"Download DRME : https://github.com/JakobPCoder/ReshadeMotionEstimation\n"
 		"Thanks JakobPCoder\n"
 		"Recommended settings for DRME\n"
-		"Motion Estimation Detail : Quarter"\n;
+		"Motion Estimation Detail : Quarter\n";
 		
 	ui_category = "Hints - Please Read for good results";
 	ui_category_closed = true;
