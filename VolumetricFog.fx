@@ -1,6 +1,6 @@
 //VolumetricFog
 //Written by MJ_Ehsan for Reshade
-//Version 1.1
+//Version 1.1a
 
 //license
 //CC0 ^_^
@@ -56,7 +56,7 @@ uniform int SampleCount <
 	ui_min = 1;
 	ui_type = "slider";
 	ui_category = "Blurring";
-> = 8;
+> = 2;
 
 uniform bool TemporalAccum <
 	ui_type = "radio";
