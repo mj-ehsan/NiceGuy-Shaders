@@ -1,6 +1,6 @@
 //Scatter
 //Written by MJ_Ehsan for Reshade
-//Version 1.1
+//Version 1.2
 
 //credits:
 //the noise2d function is converted from shadertoy to work with reshade
@@ -13,6 +13,7 @@
 //Also Thanks alot Google!
 //And thank you Nvidia for your "RayTracing Gems" book - section "ReBlur : A Hierarchical Recurrent Denoiser"
 //And Thanks again Pascal Gilcher, because This shader sandwiches your qUINT_SSR shader
+//And finally, thanks jakobPCoder for DMRE
 
 //license
 //CC0 ^_^	
@@ -51,7 +52,9 @@
 
 #include "ReShadeUI.fxh"
 #include "ReShade.fxh"
-#include "MotionVectors.fxh"
+#if exists("MotionVectors.fxh")
+ #include "MotionVectors.fxh"
+#endif
 
 uniform float Timer < source = "timer"; >;
 
@@ -59,6 +62,10 @@ uniform float Timer < source = "timer"; >;
 
 #ifndef BLUR_QUALITY
  #define BLUR_QUALITY 8
+#endif
+
+#ifndef MaxAccumulatedFrameNum
+ #define MaxAccumulatedFrameNum 15
 #endif
 
 ///////////////Include/////////////////////
@@ -72,9 +79,6 @@ sampler sTexDepth {Texture = TexDepth;};
 
 texture2D NormalTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
 sampler sNormalTex {Texture = NormalTex; };
-
-//texture2D FrameDiffTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
-//sampler sFrameDiffTex {Texture = FrameDiffTex; };
 
 texture2D RoughnessTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = R8;};
 sampler sRoughnessTex {Texture = RoughnessTex;};
@@ -91,26 +95,11 @@ sampler sTASSRTex {Texture = TASSRTex; };
 texture2D TAColorTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
 sampler sTAColorTex {Texture = TAColorTex; };
 
-//temporal stabilizer
-//texture2D TSTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
-//sampler sTSTex {Texture = TSTex; };
-
 texture2D TSTex1 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
 sampler sTSTex1 {Texture = TSTex1; };
 
-//temporal accumulator
-//texture2D TATex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
-//sampler sTATex {Texture = TATex; };
-
-texture2D TATex2 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 8; };
+texture2D TATex2 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 4; };
 sampler sTATex2 {Texture = TATex2; };
-
-//SSR
-//texture2D SSR_RayLength	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT;	Format = R16f; };
-//sampler2D sSSR_RayLength	{Texture = SSR_RayLength;};
-
-//texture2D SSR_ColorTex 	{ Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; AddressU = MIRROR;};
-//sampler2D sSSR_ColorTex	{ Texture = SSR_ColorTex;	};
 
 ///////////////Textures-Samplers///////////
 ///////////////UI//////////////////////////
@@ -119,9 +108,6 @@ uniform int Hints<
 	ui_text = 
 		"Strongly recommended to use with DRME(MotionEstimation.fx)\n"
 		"This shader is supposed to be used with qUINT_SSR and or DH_RTGI\n"
-		"The roughness category should only be used when using qUINT_SSR\n"
-		"If you are only using DH_RTGI, then set (Variation Frequency) to\n"
-		"zero and set other roughness settings to their defaults.\n"
 		"If you want to use both SSR and DH_RTGI at the same time, put SSR\n"
 		"on top of DH_RTGI to avoid artifacts. Even tho otherwise is more physical.\n\n"
 		
@@ -139,7 +125,13 @@ uniform int Hints<
 		"Settings > Temporal accumulation : 0\n"
 		"AO > Distance : 32 - 128\n"
 		"Smoothing > Radius : 1\n"
-		"Smoothing > Pass : 2.5";
+		"Smoothing > Pass : 2.5"
+		
+		"Download DRME : https://github.com/JakobPCoder/ReshadeMotionEstimation\n"
+		"Thanks JakobPCoder\n"
+		"Recommended settings for DRME\n"
+		"Motion Estimation Detail : Quarter";
+		
 	ui_category = "Hints - Please Read for good results";
 	ui_category_closed = true;
 	ui_label = " ";
@@ -200,6 +192,7 @@ static const float BlendFactor = 0;
 	ui_max = 5;
 	ui_tooltip = "Reduces Temporal Stabilizer artifacts";
 > = 2.5;*/
+
 static const float Deghost = 0;
 
 uniform float color_threshold1 <
@@ -248,7 +241,7 @@ uniform float radius <
 	ui_tooltip = "A multiplier for the Blur Radius";
 	ui_type = "slider";
 	ui_category_closed = true;
-	ui_max = 300;
+	ui_max = 30;
 > = 40;
 
 uniform int debug <
@@ -258,6 +251,11 @@ uniform int debug <
 	ui_items = "None\0Roughness map\0";
 	ui_category = "Extra";
 > = 0;
+
+uniform bool MedianDebug <
+	ui_label = "PreBlur";
+	ui_category = "Extra";
+> = 1;
 
 uniform float Exposure <
 	ui_category = "Extra";
@@ -302,6 +300,13 @@ float3 GetNormal(float2 texcoord)
 float noise2d(float2 co)
 {
   return frac(sin(dot(co.xy ,float2(1.0,73))) * 43758.5453);
+}
+
+float3 noise3dts(float2 co, int s, bool t)
+{
+	co += sin(Timer/64)*t;
+	co += frac(s/3.1415926535);
+	return float3( noise2d(co), noise2d(co+0.6432168421), noise2d(co+0.19216811));
 }
 
 //////median filter functions/////
@@ -366,7 +371,7 @@ float3 ogcolor( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV
 	if(infinitebounce == 1)
 	{
 		float3 pastSSR = tex2D(sTSTex1, texcoord).rgb;
-			   pastSSR   = pastSSR / ( 1 - pastSSR); //tonemap
+			   //pastSSR   = pastSSR / ( 1 - pastSSR); //tonemap
 		float3 X = color - (pastSSR -0.5);
 			   color = X - pastSSR;
 		return color + pastSSR; //OGColorTex
@@ -399,82 +404,91 @@ float3 roughness( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : 
 {
 	float2 p = pix;
 	
-	//roughness estimation based on color variation
-	//to do: looped high iteration sampling for wider filter
-	float3 center = tex2D( sOGColorTex, texcoord).rgb;
-	float3 r = tex2D( sOGColorTex, texcoord + float2(  roughfac1*p.x, 0)).rgb;
-	float3 l = tex2D( sOGColorTex, texcoord + float2( -roughfac1*p.x, 0)).rgb;
-	float3 d = tex2D( sOGColorTex, texcoord + float2( 0, -roughfac1*p.y)).rgb;
-	float3 u = tex2D( sOGColorTex, texcoord + float2( 0,  roughfac1*p.y)).rgb;
+	if(!GI)
+	{
+		//roughness estimation based on color variation
+		//to do: looped high iteration sampling for wider filter
+		float3 center = tex2D( sOGColorTex, texcoord).rgb;
+		float3 r = tex2D( sOGColorTex, texcoord + float2(  roughfac1*p.x, 0)).rgb;
+		float3 l = tex2D( sOGColorTex, texcoord + float2( -roughfac1*p.x, 0)).rgb;
+		float3 d = tex2D( sOGColorTex, texcoord + float2( 0, -roughfac1*p.y)).rgb;
+		float3 u = tex2D( sOGColorTex, texcoord + float2( 0,  roughfac1*p.y)).rgb;
+		
+		//using depth as bilateral blur's determinator
+		float depth = ReShade::GetLinearizedDepth(texcoord);
+		float ld = ReShade::GetLinearizedDepth(texcoord + float2(  roughfac1*p.x, 0));
+		float rd = ReShade::GetLinearizedDepth(texcoord + float2( -roughfac1*p.x, 0));
+		float dd = ReShade::GetLinearizedDepth(texcoord + float2( 0, -roughfac1*p.y));
+		float ud = ReShade::GetLinearizedDepth(texcoord + float2( 0,  roughfac1*p.y));
+		
+		//a formula based on trial and error!
+		l = clamp(abs(center - l), 0, 0.25);
+		r = clamp(abs(center - r), 0, 0.25);
+		u = clamp(abs(center - u), 0, 0.25);
+		d = clamp(abs(center - d), 0, 0.25);
+		
+		float a = 0.02;
+		
+		float3 sharp = 0;
+		if ( abs(ld - depth) <= a ) { sharp += l; }
+		if ( abs(rd - depth) <= a ) { sharp += r; }
+		if ( abs(ud - depth) <= a ) { sharp += u; }
+		if ( abs(dd - depth) <= a ) { sharp += d; }
+		//sharp = sharp + l+r+u+d;
+		
+		sharp = pow( sharp, roughfac2);
+		sharp = clamp(sharp, fromrough.x, fromrough.y);
+		sharp = (sharp - fromrough.x) / ( 1 - fromrough.x );
+		sharp = sharp / fromrough.y;
+		sharp = clamp(sharp, torough.x, torough.y);
+		//sharp = normalize(sharp);
 	
-	//using depth as bilateral blur's determinator
-	float depth = ReShade::GetLinearizedDepth(texcoord);
-	float ld = ReShade::GetLinearizedDepth(texcoord + float2(  roughfac1*p.x, 0));
-	float rd = ReShade::GetLinearizedDepth(texcoord + float2( -roughfac1*p.x, 0));
-	float dd = ReShade::GetLinearizedDepth(texcoord + float2( 0, -roughfac1*p.y));
-	float ud = ReShade::GetLinearizedDepth(texcoord + float2( 0,  roughfac1*p.y));
-	
-	//a formula based on trial and error!
-	l = clamp(abs(center - l), 0, 0.25);
-	r = clamp(abs(center - r), 0, 0.25);
-	u = clamp(abs(center - u), 0, 0.25);
-	d = clamp(abs(center - d), 0, 0.25);
-	
-	float a = 0.02;
-	
-	float3 sharp = 0;
-	if ( abs(ld - depth) <= a ) { sharp += l; }
-	if ( abs(rd - depth) <= a ) { sharp += r; }
-	if ( abs(ud - depth) <= a ) { sharp += u; }
-	if ( abs(dd - depth) <= a ) { sharp += d; }
-	//sharp = sharp + l+r+u+d;
-	
-	sharp = pow( sharp, roughfac2);
-	sharp = clamp(sharp, fromrough.x, fromrough.y);
-	sharp = (sharp - fromrough.x) / ( 1 - fromrough.x );
-	sharp = sharp / fromrough.y;
-	sharp = clamp(sharp, torough.x, torough.y);
-	//sharp = normalize(sharp);
-
-	
-	return sharp/2; //RoughnessTex
+		
+		return sharp/2;
+	} 
+	return 0;//RoughnessTex
 }
 	
 //produces a noise texture
 float3 noise( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
 	float3 color = tex2D(sOGColorTex, texcoord).rgb;
+	if(!GI)
+	{
+		float t = Timer;
+		float2 uv = texcoord;
+		uv *= sin(t/30)+0.01;
 	
-	float t = Timer;
-	float2 uv = texcoord;
-	uv *= sin(t/30)+0.01;
-
-	float3 noise = noise2d(noise2d(noise2d(uv)));
-
-    float roughness = tex2D( sRoughnessTex, texcoord).r;
-    //if ( GI == true ) { roughness = 1; }
-    return lerp(color, noise, roughness); //NoiseTex
+		float3 noise = noise2d(noise2d(noise2d(uv)));
+	
+	    float roughness;
+	    roughness = tex2D( sRoughnessTex, texcoord).r;
+	    return lerp(color, noise, roughness); //NoiseTex
+	} else
+	{return color;}
 }
 
 //blends the noise into the image
 void noiseblend(float4 Position : SV_Position, float2 texcoord : TEXCOORD, out float3 noisy : SV_Target0) //noisy image
 {
 	float3 color = tex2D(sOGColorTex, texcoord).rgb;
-	
-	float3 noise1 = tex2D(sNoiseTex, texcoord).rgb;
-	
-	float Roughness = tex2D( sRoughnessTex, texcoord).r;
-	//if ( GI == true ) { Roughness = 1; }
-	float3 noiseblend = lerp(color, noise1, Roughness);
-	noisy = (color + noise1) / 2; //TexColor
+	if(!GI)
+	{
+		float3 noise1 = tex2D(sNoiseTex, texcoord).rgb;	
+		noisy = (color + noise1) / 2; //TexColor
+	} else
+	{noisy = color;}
 }
 
 float3 noiseremove(float4 Position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
-	float3 noise = tex2D(sNoiseTex, texcoord).rgb;
 	float3 color = tex2D(sTexColor, texcoord).rgb;
-	
-	return (color*2)-noise; //TexColor
+	if(!GI)
+	{
+		float3 noise = tex2D(sNoiseTex, texcoord).rgb;
+		return (color*2)-noise; //TexColor
+	} else 
+	{return color;}
 }
 
 //extracts the SSR itself before it's getting blended to the backbuffer
@@ -486,7 +500,7 @@ float3 SSRdebug(float4 Position : SV_Position, float2 texcoord : TEXCOORD) : SV_
 	float3 ssr = (1 + ogcolor - color)/2;
 	
 	//Reinhard inverse tonemapping. Will be tonemapped again in the final (Blend) pass.
-	ssr = ssr / (1+ssr);
+	//ssr = ssr / (1+ssr);
 	
 	return ssr; //NoiseTex
 }
@@ -506,12 +520,13 @@ float4 MedianPS(in float4 Position : SV_Position, in float4 Offsets[3] : TEXCOOR
 	// "PRE-BLUR" is the first pass of the denoiser
 	// Median filter from "cMedian" used to spread the energy of outliers to a 3*3 block
 	// while maintaining the details
-	
+    float4 OutputColor = 0.0;
     // Sample locations:
     // [0].xy [1].xy [2].xy
     // [0].xz [1].xz [2].xz
     // [0].xw [1].xw [2].xw
-    float4 OutputColor = 0.0;
+    if(GI == 0 && MedianDebug == 1){
+
     float4 Sample[9];
     
     Sample[0] = tex2D(sNoiseTex, Offsets[0].xy);
@@ -524,10 +539,12 @@ float4 MedianPS(in float4 Position : SV_Position, in float4 Offsets[3] : TEXCOOR
     Sample[7] = tex2D(sNoiseTex, Offsets[1].xw);
     Sample[8] = tex2D(sNoiseTex, Offsets[2].xw);
     
-    return Med9(Sample[0], Sample[1], Sample[2], //TASSRTex
-                Sample[3], Sample[4], Sample[5],
-                Sample[6], Sample[7], Sample[8]);
-    //return tex2D(sNoiseTex, Offsets[1].xy);
+    OutputColor = Med9(Sample[0], Sample[1], Sample[2], //TASSRTex
+                 	  Sample[3], Sample[4], Sample[5],
+         	          Sample[6], Sample[7], Sample[8]);
+    } else
+    {OutputColor = tex2D(sNoiseTex, Offsets[1].xz);}
+    return OutputColor;
 }
 
 float4 TA( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
@@ -539,7 +556,7 @@ float4 TA( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
 	float4 history = tex2D( sTSTex1, texcoord + velocity).rgba;
 	
 	float3 diff = abs(current.rgb - history.rgb);
-	float diffmax = max(max(diff.r, diff.g), diff.b) * color_threshold1;	
+	float diffmax = max(max(diff.r, diff.g), diff.b) * color_threshold1 * (1-roughness);	
 	
 	float3 PastNorm = tex2D( sNormalTex, texcoord + velocity ).rgb;
 	float3 CurrNorm = GetNormal( texcoord );
@@ -548,9 +565,11 @@ float4 TA( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Targ
 	float ndiffmax = max(max(ndiff.r, ndiff.g), ndiff.b) * normal_threshold1;
 	
 	ndiffmax += diffmax;
-	ndiffmax *= 10 * (1-roughness);
+	//ndiffmax *= 10;
 	
-	return float4(lerp( history.rgb, current.rgb, saturate( 1 / ( history.a + 1 ) + ndiffmax)), history.a + 1); //TATex2
+	float coeff = saturate( 1 / ( history.a + 1 ) + ndiffmax);
+
+	return float4(lerp( history.rgb, current.rgb, coeff), min(MaxAccumulatedFrameNum, 1/(coeff))); //TATex2
 } //TATex2
 
 float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
@@ -560,25 +579,21 @@ float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 	float2 Alpha = float2(tex2D(sTATex2, texcoord).a, 1);
 	float NormalG = dot(0.333, GetNormal(texcoord));
 	
-	float alphaR = clamp( 64 - Alpha.r, 0, 64);
-	alphaR = min(8-Alpha.r, 0);
-	float Roughness = tex2D( sRoughnessTex, texcoord).r;
-	if (GI==1){Roughness=1;}
+	float alphaR;// = clamp( 64 - Alpha.r, 0, 64);
+	alphaR = min(3, max(0, 3-Alpha.r));
+	float Roughness = 1;
+	if(!GI) Roughness = tex2D( sRoughnessTex, texcoord).r;
 	
 	// "HISTORY FIX" pass is combined with the "BLUR" pass for performance reasons
 	float4 Color = float4( tex2Dlod( sTATex2, float4(texcoord, 0, alphaR)).rgb, 1); //The output of the Temporal Accumulator
-
 	
 	//noise2d result is not random enough so I had to do it 3 times!
-	float seed = noise2d(noise2d(noise2d(texcoord.xy)));
 	int iteration = BLUR_QUALITY;
 	for (int i = 1; i <= iteration; i++)
 	{
-		float distance = float(i + seed)/iteration;
-		float ang = frac(seed + i * 0.6180339887498) * 3.1415927 * 2.0;
-		//ang = (ang/iteration);
-		//ang += i * ((2 * 3.1415927) / iteration);
-		//using a similar random sequence to get a random angle
+		float2 seed = noise3dts(texcoord.xy, i, 0).rg;
+		float distance = (seed.x + i) / iteration;
+		float ang = seed.y * 3.14159265 * 2;
 		
 		float2 offset; sincos(ang, offset.y, offset.x); 
 		offset *= sqrt(distance);
@@ -587,7 +602,7 @@ float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 		
 		//jittered SSR Color
 		float4 JCol = float4( tex2Dlod( sTATex2, float4(texcoord + offset, 0, alphaR)).rgb, 1);	
-		float2 JAlpha = float2(tex2Dlod(sTATex2, float4(texcoord, 0, alphaR)).a, 1);
+		float2 JAlpha = float2(tex2Dlod(sTATex2, float4(texcoord + offset, 0, alphaR)).a, 1);
 		//jittered original Color. To be used as a determinator
 
 		float JNormalG = dot(0.333, GetNormal(texcoord + offset ).xyz);
@@ -597,13 +612,12 @@ float4 Blur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 		//if(Ndiff < normal_threshold)
 		{
 			Color += JCol;
-			Alpha += JAlpha;
+			//Alpha += JAlpha;
 		}
 	}
 	
 	float3 Blurred = Color.rgb/Color.a;
-	//Blurred = Blurred / ( 1.01 - Blurred);	
-	return float4( Blurred.rgb, Alpha.r ); //NoiseTex
+	return float4( Blurred.rgb, Alpha.r/Alpha.g ); //NoiseTex
 }
 
 void PostBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0, out float3 Normal : SV_Target1)
@@ -617,23 +631,20 @@ void PostBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 	
 	float NormalG = dot(0.333, GetNormal(texcoord));
 	float Radius = dot(0.333, 8 * radius * abs(Color2-Color));
-		
-	float seed = noise2d(noise2d(noise2d(texcoord.xy))	);
+	
 	int iteration = BLUR_QUALITY;
 	for (int i = 1; i <= iteration; i++)
 	{
-		float distance = float(i + seed)/iteration;
-		float ang = frac(seed + i * 0.6180339887498) * 3.1415927 * 2.0;
-		//ang = (ang/iteration);
-		//ang += i * ((2 * 3.1415927) / iteration);
-		//using a similar random sequence to get a random angle
+		float2 seed = noise3dts(texcoord.xy, i, 0).rg;
+		float distance = (seed.x + i) / iteration;
+		float ang = seed.y * 3.14159265 * 2;
 
 		float2 offset; sincos(ang, offset.y, offset.x); 
 		offset *= sqrt(distance);
 		offset *= p.xy * Radius;
 		
 		float4 JCol   = float4( tex2D( sNoiseTex, texcoord + offset ).rgb, 1);
-		float2 JAlpha = float2(tex2D(sTATex2, texcoord).a, 1);	
+		float2 JAlpha = float2( tex2D( sNoiseTex, texcoord + offset ).a  , 1);	
 
 		float JNormalG = dot(0.333, GetNormal(texcoord + offset ).xyz);
 		float Ndiff = abs(JNormalG - NormalG);
@@ -641,12 +652,12 @@ void PostBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 		if(Ndiff < normal_threshold && Cdiff < color_threshold)
 		{
 			Color2 += JCol;
-			Alpha += JAlpha;
+			//Alpha += JAlpha;
 		}
 	}
 	
 	float3 Blurred = Color2.rgb/Color2.a;	
-	FinalColor = float4( Blurred.rgb, Alpha.r ); //TSTex1
+	FinalColor = float4( Blurred.rgb, Alpha.r/Alpha.g ); //TSTex1
 	Normal = GetNormal(texcoord); //NormalTex
 }	
 
@@ -676,7 +687,7 @@ void PostBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 float3 Blend(float4 Position : SV_Position, float2 texcoord : TEXCOORD) : SV_Target
 {
 	float3 color = tex2D(sTSTex1, texcoord).rgb; //reflection only
-	color = color / ( 1 - color); //tonemapped. inverse tonemapping was done in SSRDebug pass
+	//color = color / ( 1 - color); //tonemapped. inverse tonemapping was done in SSRDebug pass
 	float3 ogcolor = tex2D(sOGColorTex, texcoord).rgb;
 	float3 col = ogcolor-((color)-0.5);
 	
@@ -693,7 +704,7 @@ float3 Blend(float4 Position : SV_Position, float2 texcoord : TEXCOORD) : SV_Tar
 	}
 	else if ( debug == 3 ) //reflection only
 	{	
-		col = abs(color)+0.1;
+		col = abs(color)*16;
 	}
 	else if ( debug == 1 ) //roughness map
 	{
@@ -785,6 +796,12 @@ technique Scatter
         PixelShader = MedianPS;
         RenderTarget = TASSRTex;
     }
+    /*pass PreBlur
+    {
+    	VertexShader = PostProcessVS;
+    	PixelShader = PreBlur;
+    	RenderTarget = TASSRTex;
+    }*/
     pass TemporalAccum
 	{
 		VertexShader = PostProcessVS;
