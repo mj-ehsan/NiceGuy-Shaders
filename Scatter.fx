@@ -125,12 +125,12 @@ uniform int Hints<
 		"Settings > Temporal accumulation : 0\n"
 		"AO > Distance : 32 - 128\n"
 		"Smoothing > Radius : 1\n"
-		"Smoothing > Pass : 2.5"
+		"Smoothing > Pass : 2.5\n"
 		
 		"Download DRME : https://github.com/JakobPCoder/ReshadeMotionEstimation\n"
 		"Thanks JakobPCoder\n"
 		"Recommended settings for DRME\n"
-		"Motion Estimation Detail : Quarter";
+		"Motion Estimation Detail : Quarter"\n;
 		
 	ui_category = "Hints - Please Read for good results";
 	ui_category_closed = true;
