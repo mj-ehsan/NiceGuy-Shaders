@@ -1,6 +1,6 @@
 //Rim
 //Written by MJ_Ehsan for Reshade
-//Version 1.0
+//Version 1.0a
 
 //license
 //CC0 ^_^
@@ -11,6 +11,12 @@
 #include "ReShade.fxh"
 
 #define pix float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
+
+#if __RENDERER__ < 0xA000
+ #define D3D9 0 //yes it's weird to set true value as 0 and false as 1?
+#else
+ #define D3D9 1
+#endif
 
 ///////////////Include/////////////////////
 ///////////////Textures-Samplers///////////
@@ -60,14 +66,19 @@ uniform float3 light <
 	ui_type = "color";
 > = 1;
 
-uniform int iteration <
+#if D3D9
+uniform int BLUR_ITERATION_ <
 	ui_label = "Bloom Width";
 	ui_type = "slider";
 	ui_category = "Bloom";
 	ui_min = 1;
 	ui_max = 16;
 > = 4;
-
+#else
+#ifndef BLUR_ITERATION_
+ #define BLUR_ITERATION_ 4
+#endif
+#endif
 uniform float bloom <
 	ui_label = "Bloom Intensity";
 	ui_type = "slider";
@@ -90,7 +101,7 @@ uniform float MinDepth <
 	ui_type = "slider";
 > = 0;
 
-static const bool Quality = 0;
+//static const bool Quality = 0;
 
 ///////////////UI//////////////////////////
 ///////////////Functions///////////////////
@@ -148,9 +159,9 @@ float3 GetNormalHQ(float2 texcoord)
 float3 rim(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 {
 	float2 p = pix;
-	float3 normal;
-	if(Quality == 0) {normal = GetNormal( texcoord ).z;}
-	else             {normal = GetNormalHQ(texcoord).z;}
+	float3 normal; normal = GetNormal( texcoord ).z;
+	//if(Quality == 0) {normal = GetNormal( texcoord ).z;}
+	//else             {normal = GetNormalHQ(texcoord).z;}
 	
 	float3 color = tex2D(sTexColor, texcoord).rgb;
 	
@@ -168,12 +179,12 @@ float3 HBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 	float2 p = pix;
 	float3 Color = 0;
 	
-	for (int i = -iteration; i <= iteration; i++)
+	for (int i = -BLUR_ITERATION_; i <= BLUR_ITERATION_; i++)
 	{
 		int x = abs(i);
-		Color += (iteration - x)*tex2D( sTexRim, texcoord + float2(( p.r * ( ( 2 * i ) + 0.5 )), 0)).rgb;	
+		Color += (BLUR_ITERATION_ - x)*tex2D( sTexRim, texcoord + float2(( p.r * ( ( 2 * i ) + 0.5 )), 0)).rgb;	
 	}
-	return Color/((iteration*iteration));	
+	return Color/((BLUR_ITERATION_*BLUR_ITERATION_));	
 }
 
 float3 VBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
@@ -184,12 +195,12 @@ float3 VBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 	float3 Background = tex2D(sTexColor, texcoord).rgb;
 	float Depth = ReShade::GetLinearizedDepth(texcoord);
 	
-	for (int i = -iteration; i <= iteration; i++)
+	for (int i = -BLUR_ITERATION_; i <= BLUR_ITERATION_; i++)
 	{
 		int x = abs(i);
-		Color += (iteration - x)*tex2D( sTexHBlur, texcoord + float2(0,( p.g * ( ( 2 * i ) + 0.5 )))).rgb;	
+		Color += (BLUR_ITERATION_ - x)*tex2D( sTexHBlur, texcoord + float2(0,( p.g * ( ( 2 * i ) + 0.5 )))).rgb;	
 	}
-	Bloom = Color/((iteration*iteration));
+	Bloom = Color/((BLUR_ITERATION_*BLUR_ITERATION_));
 	
 	Bloom *= bloom;
 	Bloom += tex2D( sTexRim, texcoord).rgb;
@@ -206,8 +217,9 @@ float3 VBlur(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 ///////////////Techniques//////////////////
 
 technique Rim <
-	ui_tooltip = "Adds a fake rim light effect - WIP -\n"
-				 "Add an AO shader after this for a better look";
+	ui_tooltip = "               Rim Light Effect               \n"
+				 "               ||By Ehsan2077||               \n"
+				 "Add an AO shader after this for a better look.";
 
 >
 {
