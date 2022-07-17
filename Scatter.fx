@@ -549,7 +549,10 @@ float4 MedianPS(in float4 Position : SV_Position, in float4 Offsets[3] : TEXCOOR
 
 float4 TA( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
-	float2 velocity = sampleMotion(texcoord).xy;
+	float2 velocity = 0;
+#if exists("MotionVectors.fxh")
+	velocity = sampleMotion(texcoord).xy;
+#endif
 	float roughness = tex2D(sRoughnessTex, texcoord).r;
 	
 	float4 current = tex2D( sTASSRTex, texcoord ).rgba;
