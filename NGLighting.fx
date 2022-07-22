@@ -885,7 +885,7 @@ void output(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float3 Fi
 ///////////////Techniques//////////////////
 technique NGLighting<
 	ui_label = "NiceGuy Lighting (GI/Reflection)";
-	ui_tooltip = "         EnlightenGI 0.1alpha        \n"
+	ui_tooltip = "      NiceGuy Lighting 0.1alpha      \n"
 				 "           ||By Ehsan2077||          \n"
 				 "|Use with  DRME  at quarter  detail.|\n"
 				 "|And don't forget to read the hints.|";
