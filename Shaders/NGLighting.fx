@@ -47,6 +47,7 @@
 //6- [ ]Add AO support
 //7- [ ]Add second temporal pass after second spatial pass.
 //8- [ ]Add Spatiotemporal upscaling. have to either add jitter to the RayMarching pass or a checkerboard pattern.
+//9- [ ]Add Smooth Normals.
 
 ///////////////Include/////////////////////
 
@@ -163,7 +164,7 @@ uniform int Hints<
 			  "simplified in the future. These complex settings\n"
 			  "of the current version will be kept and are accesible\n"
 			  "Using PreProcessor Defenitions.\n\n"
-			  "To use Enlighten for reflections, do all these steps:\n"
+			  "To use NiceGuy Lighting for reflections, do all these steps:\n"
 			  "1- Blending Options > GI Mode : off\n"
 			  "2- Blending Options > AO Intensity : 0\n"
 			  "3- Color Management > sRGB to Linear : off\n"
@@ -272,7 +273,7 @@ uniform int MAX_Frames <
 	ui_tooltip = "Higher values increase both the blur size\n"
 				 "and the temporal accumulation effectiveness.";
 	ui_category_closed = true;
-	ui_min = 0;
+	ui_min = 1;
 	ui_max = 64;
 > = 64;
 
@@ -596,7 +597,10 @@ float InvTonemapper(float color)
 float dilate(in sampler color, in float2 texcoord, in float2 p)
 {
 	float samples[9];
-
+	
+	//258
+	//147
+	//036
 	samples[0] = tex2D(color, texcoord + float2(texcoord + float2(-p.x, -p.y))).r;
 	samples[1] = tex2D(color, texcoord + float2(texcoord + float2(-p.x,    0))).r;
 	samples[2] = tex2D(color, texcoord + float2(texcoord + float2(-p.x,  p.y))).r;
@@ -607,17 +611,64 @@ float dilate(in sampler color, in float2 texcoord, in float2 p)
 	samples[7] = tex2D(color, texcoord + float2(texcoord + float2( p.x,    0))).r;
 	samples[8] = tex2D(color, texcoord + float2(texcoord + float2( p.x,  p.y))).r;
 	
-	return min9(
-		samples[0],
-		samples[1],
-		samples[2],
-		samples[3],
-		samples[4],
-		samples[5],
-		samples[6],
-		samples[7],
-		samples[8]);
+	return min9(samples[2],samples[5],samples[8],
+				samples[1],samples[4],samples[7],
+				samples[0],samples[3],samples[6]);
 }
+
+float dilate2(in sampler color, in float2 texcoord, in float2 p)
+{
+	float samples[25];
+	//  |  |  |  |  |
+	//  | 2| 5| 8|  |
+	//  | 1| 4| 7|  |
+	//  | 0| 3| 6|  |
+	//  |  |  |  |  |
+	samples[0] = tex2D(color, texcoord + float2(texcoord + float2(-p.x, -p.y))).r;
+	samples[1] = tex2D(color, texcoord + float2(texcoord + float2(-p.x,    0))).r;
+	samples[2] = tex2D(color, texcoord + float2(texcoord + float2(-p.x,  p.y))).r;
+	samples[3] = tex2D(color, texcoord + float2(texcoord + float2(   0, -p.y))).r;
+	samples[4] = tex2D(color, texcoord + float2(texcoord + float2(   0,    0))).r;
+	samples[5] = tex2D(color, texcoord + float2(texcoord + float2(   0,  p.y))).r;
+	samples[6] = tex2D(color, texcoord + float2(texcoord + float2( p.x, -p.y))).r;
+	samples[7] = tex2D(color, texcoord + float2(texcoord + float2( p.x,    0))).r;
+	samples[8] = tex2D(color, texcoord + float2(texcoord + float2( p.x,  p.y))).r;
+	
+	float2 p2 = p*2;
+	//13|15|17|19|24|
+	//12|  |  |  |23|
+	//11|  |  |  |22|
+	//10|  |  |  |21|
+	// 9|14|16|18|20|
+	samples[9]  = tex2D(color, texcoord + float2(texcoord + float2(-p2.x, -p2.y))).r;
+	samples[10] = tex2D(color, texcoord + float2(texcoord + float2(-p2.x,  -p.y))).r;
+	samples[11] = tex2D(color, texcoord + float2(texcoord + float2(-p2.x,     0))).r;
+	samples[12] = tex2D(color, texcoord + float2(texcoord + float2(-p2.x,   p.y))).r;
+	samples[13] = tex2D(color, texcoord + float2(texcoord + float2(-p2.x,  p2.y))).r;
+	samples[14] = tex2D(color, texcoord + float2(texcoord + float2( -p.x, -p2.y))).r;
+	samples[15] = tex2D(color, texcoord + float2(texcoord + float2( -p.x,  p2.y))).r;
+	samples[16] = tex2D(color, texcoord + float2(texcoord + float2(    0, -p2.y))).r;
+	samples[17] = tex2D(color, texcoord + float2(texcoord + float2(    0,  p2.y))).r;
+	samples[18] = tex2D(color, texcoord + float2(texcoord + float2(  p.x, -p2.y))).r;
+	samples[19] = tex2D(color, texcoord + float2(texcoord + float2(  p.x,  p2.y))).r;
+	samples[20] = tex2D(color, texcoord + float2(texcoord + float2( p2.x, -p2.y))).r;
+	samples[21] = tex2D(color, texcoord + float2(texcoord + float2( p2.x,  -p.y))).r;
+	samples[22] = tex2D(color, texcoord + float2(texcoord + float2( p2.x,     0))).r;
+	samples[23] = tex2D(color, texcoord + float2(texcoord + float2( p2.x,   p.y))).r;
+	samples[24] = tex2D(color, texcoord + float2(texcoord + float2( p2.x,  p2.y))).r;
+
+	
+	return min3(min9(samples[ 2],samples[ 5],samples[ 8],
+					 samples[ 1],samples[ 4],samples[ 7],
+					 samples[ 0],samples[ 3],samples[ 6]),
+				min9(samples[ 9],samples[10],samples[11],
+					 samples[12],samples[13],samples[14],
+					 samples[15],samples[16],samples[17]),
+		   min3(min3(samples[18],samples[19],samples[20]),
+				min3(samples[21],samples[22],samples[23]),
+					 samples[24]));
+}
+
 ///////////////Functions///////////////////
 ///////////////Pixel Shader////////////////
 
@@ -641,6 +692,16 @@ void GBuffer1
 	//normal = normal * 0.5 + 0.5;
 }
 
+/*void GBuffer2
+(
+	float4 vpos : SV_Position,
+	float2 texcoord : TexCoord,
+	out float3 normal : SV_Target) //SSSR_NormTex
+{
+	normal = tex2D(sSSSR_NormTex, texcoord).rgb;
+	//normal = normal * 0.5 + 0.5;
+}*/
+
 void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0)//, out float RayLength : SV_Target1)
 {
 	float3 depth    = LDepth  (texcoord);
@@ -654,7 +715,7 @@ void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 		normal   = tex2D(sSSSR_NormTex, texcoord).rgb;
 		eyedir   = normalize(position);
 	
-		raydirR   = lerp(reflect(eyedir, normal), noise3dts(texcoord, 0, 1) - 0.5, 0.5);
+		raydirR   = lerp(reflect(eyedir, normal), noise3dts(texcoord, 0, MAX_Frames>8) - 0.5, 0.5);
 		raydirG   = reflect(eyedir, normal);
 		raybias   = dot(raydirG, raydirR);
 		//float3 raydir   	 = lerp(raydirG, raydirR, pow(abs(raybias), 1/pow(roughness, 0.5)));
@@ -699,7 +760,7 @@ void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 }
 
 void TemporalFilter0(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float mask : SV_Target0)
-{
+{//Writes the mask to a texture. Then the texture will be dilated in the next pass to avoid masking edges when camera jitters
 	//Definitions
 	/*float4 Current, History; */float3 normal, past_normal, ogcolor, past_ogcolor; float2 MotionVectors, outbound; float depth, past_depth, HistoryLength;
 	//Inputs
@@ -708,9 +769,6 @@ void TemporalFilter0(float4 vpos : SV_Position, float2 texcoord : TexCoord, out 
 	MotionVectors = sampleMotion(texcoord);
 #endif
 	HistoryLength = tex2D(sSSSR_HLTex1, texcoord + MotionVectors).r;
-	//Reflection Color
-	//Current = tex2D(sSSSR_ReflectionTex, texcoord).rgba;
-	//History = tex2D(sSSSR_FilterTex2, texcoord + MotionVectors).rgba;
 	//Depth
 	depth = LDepth(texcoord);
 	past_depth = tex2D(sSSSR_PDepthTex, texcoord + MotionVectors).r;
@@ -726,14 +784,7 @@ void TemporalFilter0(float4 vpos : SV_Position, float2 texcoord : TexCoord, out 
 	outbound.rg = (outbound.r > 1 || outbound.g < 0);
 	mask = abs(lum(normal) - lum(past_normal)) + abs(depth - past_depth) + abs(lum(ogcolor.rgb) - lum(past_ogcolor.rgb))*0.5 > Tthreshold;
 	mask = max(mask, outbound.r);
-	//Calculating the number of accumulated frames
-	//HistoryLength *= (1-mask); //sets the history length to 0 for discarded samples
-	//HLOut = HistoryLength + (1-mask); //+1 for accepted samples
-	//HLOut = min(HLOut, MAX_Frames*max(sqrt(roughness), 2*STEPNOISE)); //Limits the linear accumulation to MAX_Frames, The rest will be accumulated exponentialy with the speed = (1-1/Max_Frames)
-
-	//if( TemporalRefine)FinalColor = lerp(History, Current, min((Current.a != 0) ? 1/HLOut : 0.01, 1-mask));
-	//if(!TemporalRefine)FinalColor = lerp(History, Current, min(                   1/HLOut,     1-mask));
-}
+	}
 
 void TemporalFilter1(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0, out float HLOut : SV_Target1)
 {
@@ -744,29 +795,29 @@ void TemporalFilter1(float4 vpos : SV_Position, float2 texcoord : TexCoord, out 
 	HistoryLength = tex2D(sSSSR_HLTex1, texcoord + MotionVectors).r;
 	p = pix; p = p/RESOLUTION_SCALE_;
 	//mask = tex2D(sSSSR_MaskTex, texcoord).r;
-	mask = dilate(sSSSR_MaskTex, texcoord/2, p);
+	mask = 1-dilate(sSSSR_MaskTex, texcoord/2, p);
 	Current = tex2D(sSSSR_ReflectionTex, texcoord).rgba;
 	History = tex2D(sSSSR_FilterTex2, texcoord + MotionVectors).rgba;
 	
-	HistoryLength *= (1-mask); //sets the history length to 0 for discarded samples
-	HLOut = HistoryLength + (1-mask); //+1 for accepted samples
+	HistoryLength *= mask; //sets the history length to 0 for discarded samples
+	HLOut = HistoryLength + mask; //+1 for accepted samples
 	HLOut = min(HLOut, MAX_Frames*max(sqrt(roughness), 2*STEPNOISE)); //Limits the linear accumulation to MAX_Frames, The rest will be accumulated exponentialy with the speed = (1-1/Max_Frames)
-	
-	if( TemporalRefine)FinalColor = lerp(History, Current, min((Current.a != 0) ? 1/HLOut : 0.01, 1-mask));
-	if(!TemporalRefine)FinalColor = lerp(History, Current, min(                   1/HLOut,     1-mask));
+
+	if( TemporalRefine)FinalColor = lerp(History, Current, min((Current.a != 0) ? 1/HLOut : 0.01, mask));
+	if(!TemporalRefine)FinalColor = lerp(History, Current, min(                   1/HLOut,     mask));
 }
 
 void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0)
 {
 	float HLOut = tex2D(sSSSR_HLTex0, texcoord).r;
-	if(!DualPass||HLOut>(MAX_MipFilter*2)){ FinalColor = tex2D(sSSSR_FilterTex0, texcoord).rgba;}
+	if(!DualPass||HLOut>((MAX_MipFilter*64)/float(MAX_Frames))){ FinalColor = tex2D(sSSSR_FilterTex0, texcoord).rgba;}
 	else{
-	float4 color, scolor; float3 snormal, normal, ogcol; float2 offset[8], p; float sdepth, depth, lod, samples;
+	float4 color; float3 snormal, normal, ogcol; float2 offset[8], p; float sdepth, depth, lod, samples;
 
 	p = pix;
 	samples = 1;
 
-	normal = tex2D(sSSSR_NormTex, texcoord).rgb * 0.5 + 0.5;
+	normal = tex2D(sSSSR_NormTex, texcoord).rgb;
 	depth = LDepth(texcoord);
 	ogcol = tex2D(sTexColor, texcoord).rgb;
 	
@@ -782,16 +833,16 @@ void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord
 	{
 		offset[i] += texcoord;
 		sdepth = LDepth(offset[i]);
-		snormal = tex2D(sSSSR_NormTex, offset[i]).rgb * 0.5 + 0.5;
-		if(lum(abs(snormal - normal))+abs(sdepth-depth)/10 < Sthreshold)
+		snormal = tex2D(sSSSR_NormTex, offset[i]).rgb;
+		if(lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold)
 		{
-			scolor = tex2Dlod(sSSSR_FilterTex0, float4(offset[i].xy, 0, lod));
-			color += scolor;
+			color += tex2Dlod(sSSSR_FilterTex0, float4(offset[i].xy, 0, lod));
 			samples += 1;
 		}
 	}
 	color /= samples;
 	FinalColor = color;
+	normal = normal * 0.5 + 0.5;
 	}
 }
 	
@@ -805,12 +856,12 @@ void SpatialFilter1(
 	out float3 ogcol      : SV_Target3,//POGColTex
 	out float  HLOut      : SV_Target4)//HLTex1
 {
-	float4 color, scolor; float3 snormal; float2 offset[8], p; float sdepth, lod, samples;
+	float4 color; float3 snormal; float2 offset[8], p; float sdepth, lod, samples;
 
 	p = pix;
 	samples = 1;
 
-	normal = tex2D(sSSSR_NormTex, texcoord).rgb * 0.5 + 0.5;
+	normal = tex2D(sSSSR_NormTex, texcoord).rgb;
 	depth = LDepth(texcoord);
 	ogcol = tex2D(sTexColor, texcoord).rgb;
 	
@@ -826,16 +877,16 @@ void SpatialFilter1(
 	{
 		offset[i] += texcoord;
 		sdepth = LDepth(offset[i]);
-		snormal = tex2D(sSSSR_NormTex, offset[i]).rgb * 0.5 + 0.5;
-		if(lum(abs(snormal - normal))+abs(sdepth-depth)/10 < Sthreshold)
+		snormal = tex2D(sSSSR_NormTex, offset[i]).rgb;
+		if(lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold)
 		{
-			scolor = tex2Dlod(sSSSR_FilterTex1, float4(offset[i].xy, 0, lod));
-			color += scolor;
+			color += tex2Dlod(sSSSR_FilterTex1, float4(offset[i].xy, 0, lod));
 			samples += 1;
 		}
 	}
 	color /= samples;
 	FinalColor = color;
+	normal = normal * 0.5 + 0.5;
 }
 
 
@@ -848,7 +899,7 @@ void output(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float3 Fi
 	float depth = LDepth(texcoord);
 	//Reflection.rgb = Tonemapper(Reflection.rgb);
 	//Reflection.rgb *= Reflection.a;
-	if(HLFix&&debug!=1)Reflection.a = Reflection.a + lum(Reflection.rgb)*Reflection.a - lum(Background.rgb);
+	if(HLFix&&debug!=1)Reflection.a = saturate(Reflection.a + lum(Reflection.rgb)*Reflection.a) - lum(Background.rgb);
 	Reflection.a *= 1-saturate((depthfade/(1-depthfade))*depth);
 	Reflection.a = saturate(Reflection.a);
 	
@@ -861,15 +912,14 @@ void output(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float3 Fi
 	Reflection.rgb = lerp(lum(Reflection.rgb), Reflection.rgb, SatExp.r);
 	Reflection.rgb *= SatExp.g;
 	
-	//FinalColor = Reflection.rgb*Background.rgb;//GI Dumb and super simple blend :| Any problem? >:(
-	if( GI)FinalColor = lerp(Background.rgb, Reflection.rgb*Background.rgb, Reflection.a);
+	float3 albedo = lerp(Background.rgb, Background.rgb/dot(Background.rgb, 1), 0);
+	if( GI)FinalColor = lerp(Background.rgb, Reflection.rgb*albedo, Reflection.a);
 	if(!GI)FinalColor = lerp(Background.rgb, Reflection.rgb, Reflection.a);
 	
 	//FinalColor = Tonemapper(FinalColor);
 	//if(LinearConvert)FinalColor.rgb = pow(abs(FinalColor.rgb), 2.2);
 	
 	FinalColor = lerp(FinalColor.rgb, BGOG.rgb, depth>=SkyDepth);//Sky Mask
-	//FinalColor = lerp(FinalColor, BGOG.rgb, pow(lum(BGOG.rgb), 2));
 	
 	if(LinearConvert) Reflection.rgb = pow(abs(Reflection.rgb), 2.2);
 	
@@ -878,7 +928,8 @@ void output(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float3 Fi
 	if(debug==3)FinalColor = tex2D(sSSSR_NormTex, texcoord).rgb * 0.5 + 0.5;
 	if(debug==4)FinalColor = tex2D(sSSSR_HLTex1, texcoord).r/MAX_Frames;
 	float mask = tex2D(sSSSR_MaskTex, texcoord).r;
-	//FinalColor = (Background.rgb);
+	float2 p = pix;
+	//FinalColor = 1-dilate(sSSSR_MaskTex, texcoord/2, p);
 }
 
 ///////////////Pixel Shader////////////////
