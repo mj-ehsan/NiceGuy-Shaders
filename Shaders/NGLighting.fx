@@ -427,8 +427,8 @@ uniform float2 SatExp <
 	ui_tooltip = "Left slider is Saturation. Right one is Exposure.";
 	ui_category_closed = true;
 	ui_min = 0;
-	ui_max = 1;
-> = float2(0.5,0.5);
+	ui_max = 2;
+> = float2(0.5,2);
 
 uniform uint debug <
 	ui_type = "combo";
