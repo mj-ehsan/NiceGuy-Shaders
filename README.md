@@ -1,5 +1,6 @@
 # NiceGuy-Shaders
 A collection of my ReShade shaders.
+
 1- NiceGuy Lighting can be used to either add GI/AO or Specular Reflections.
 You don't need ScatterFX for this one. It still requires DRME as it uses
 temporal denoising. Still in Beta so expect major bugs. One known bug is
