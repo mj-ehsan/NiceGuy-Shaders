@@ -1,6 +1,6 @@
 //Stochastic Screen Space Ray Tracing
 //Written by MJ_Ehsan for Reshade
-//Version 0.3
+//Version 0.4
 
 //license
 //CC0 ^_^
@@ -64,11 +64,8 @@ uniform float Timer < source = "timer"; >;
 #define PI 3.1415927
 #define PI2 2*PI
 #define rad(x) (x/360)*PI2 
-
-//#ifndef MAXIMUM_RAY_STEPS
-#undef MAXIMUM_RAY_STEPS
- #define MAXIMUM_RAY_STEPS 32
-//#endif
+///////////////Include/////////////////////
+///////////////PreProcessor-Definitions////
 
 #define RAYSTEPS MAXIMUM_RAY_STEPS
 
@@ -116,7 +113,13 @@ uniform float Timer < source = "timer"; >;
 //less noise but also less stable image on low MAX_Frames numbers.
 #define SUPER_SAMPLE_RAYS 8
 
-///////////////Include/////////////////////
+//if the History Length is lower than this threshold, edge avoiding function will be ignored to make
+//sure the temporally underaccumulated pixel is getting enough spatial accumulation.
+//HistoryFix0 should be lower or equal to HistoryFix1 in order to avoid artifacts.
+#define HistoryFix0 2 //for the Spatial Filter 0
+#define HistoryFix1 4 //for the Spatial Filter 1
+
+///////////////PreProcessor-Definitions////
 ///////////////Textures-Samplers///////////
 
 texture TexColor : COLOR;
@@ -125,7 +128,7 @@ sampler sTexColor {Texture = TexColor; SRGBTexture = false;};
 texture TexDepth : DEPTH;
 sampler sTexDepth {Texture = TexDepth;};
 
-//texture SSSR_Noise <source="NG-BlueNoise.png";> { Width = 1024; Height = 768; Format=RGBA8; };
+//texture SSSR_Noise <source="NG-BlueNoise.png";> { Width = 1024; Height = 768; Format=R8; };
 //sampler sSSSR_Noise { Texture = SSSR_Noise; };
 
 texture texMotionVectors < pooled = false; > { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
@@ -312,7 +315,7 @@ uniform uint UI_RAYSTEPS <
 	ui_tooltip = "Increases ray length at the cost of performance.";
 	ui_category_closed = true;
 	ui_min = 1;
-	ui_max = RAYSTEPS;
+	ui_max = 32;
 > = 16;
 
 uniform float RAYDEPTH <
@@ -592,8 +595,8 @@ float3 Normal(float2 texcoord)
 
 float3 Bump(float2 texcoord, float height)
 {
-	float2 p = pix;
-	float2 T = p * 1.0 ;/// (LDepth(texcoord) * RESHADE_DEPTH_LINEARIZATION_FAR_PLANE);
+	float2 T = pix;
+	
 	float2 offset[4] =
 	{
 		float2( T.x,   0),
@@ -718,8 +721,10 @@ void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 		//noise.r = tex2Dfetch( sSSSR_Noise, vpos.xy%64).r;
 		//noise.g = tex2Dfetch( sSSSR_Noise, vpos.xy%64+64).r;
 		//noise.b = tex2Dfetch( sSSSR_Noise, vpos.xy%64+128).r;
-		//noise = pow(noise, 2);
-		noise = noise3dts(texcoord, 0, MAX_Frames>SUPER_SAMPLE_RAYS);
+		//noise = noise * 0.5 + 0.5;
+		noise = noise3dts(texcoord, 0, MAX_Frames > SUPER_SAMPLE_RAYS);
+		
+		float HL = tex2D(sSSSR_HLTex0, texcoord).r;
 		position = UVtoPos (texcoord);
 		normal   = tex2D(sSSSR_NormTex, texcoord).rgb;
 		eyedir   = normalize(position);
@@ -731,8 +736,7 @@ void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 		raydir    = lerp(raydirG, raydirR, pow(1-(0.5*cos(raybias*PI)+0.5), 1/pow(InvTonemapper((GI)?1:roughness), 0.5)));
 		//raydir    = raydirOG;
 		
-		StepNoise = noise3dts(texcoord,0,1).x;
-		steplength = 1+StepNoise*STEPNOISE;
+		steplength = 1+noise.x*max(STEPNOISE, 0.01);
 		raypos = position + raydir * steplength;
 		float raydepth = -RAYDEPTH;
 		[loop]for( i = 0; i < UI_RAYSTEPS; i++)
@@ -789,7 +793,7 @@ void TemporalFilter0(float4 vpos : SV_Position, float2 texcoord : TexCoord, out 
 	outbound = texcoord + MotionVectors;
 	outbound = float2(max(outbound.r, outbound.g), min(outbound.r, outbound.g));
 	outbound.rg = (outbound.r > 1 || outbound.g < 0);
-	mask = abs(lum(normal) - lum(past_normal)) + abs(depth - past_depth) + abs(lum(ogcolor - past_ogcolor)) > Tthreshold;
+	mask = abs(lum(normal) - lum(past_normal)) + abs(depth - past_depth) + abs(lum(ogcolor - past_ogcolor))*200000 > Tthreshold;
 	mask = max(mask, outbound.r);
 	}//sky mask end
 }
@@ -819,7 +823,7 @@ void TemporalFilter1(float4 vpos : SV_Position, float2 texcoord : TexCoord, out 
 	
 	HistoryLength *= mask; //sets the history length to 0 for discarded samples
 	HLOut = HistoryLength + mask; //+1 for accepted samples
-	HLOut = min(HLOut, MAX_Frames*max(sqrt((GI)?1:roughness), STEPNOISE)); //Limits the linear accumulation to MAX_Frames, The rest will be accumulated exponentialy with the speed = (1-1/Max_Frames)
+	HLOut = min(HLOut, MAX_Frames*max(sqrt((GI)?1:roughness), max(0.0001, STEPNOISE))); //Limits the linear accumulation to MAX_Frames, The rest will be accumulated exponentialy with the speed = (1-1/Max_Frames)
 
 	if( TemporalRefine)FinalColor = lerp(History, Current, min((Current.a != 0) ? 1/HLOut : 0.002, mask));
 	if(!TemporalRefine)FinalColor = lerp(History, Current, min(                   1/HLOut,        mask));
@@ -830,7 +834,7 @@ void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord
 	float HLOut = tex2D(sSSSR_HLTex0, texcoord).r;
 	if(DualPass&&HLOut<=MEDIUM||RESOLUTION_SCALE_<=0.5)
 	{
-		float4 color; float3 snormal, normal, ogcol; float3 offset[8], p; float sdepth, depth, lod, samples, roughness;
+		float4 color; float3 snormal, normal, ogcol; float3 offset[8], p; float HLOut, sdepth, depth, lod, samples, roughness;
 	
 		p = pix;
 		samples = 1;
@@ -839,7 +843,7 @@ void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord
 		depth = LDepth(texcoord);
 		ogcol = tex2D(sTexColor, texcoord).rgb;
 		
-	
+		HLOut = tex2D(sSSSR_HLTex0, texcoord).r;
 		lod = min(MAX_MipFilter, max(0, (MAX_MipFilter)-HLOut));
 		//lod = 0;
 		p *= saturate(roughness)*pow(2, (lod))*5;
@@ -852,7 +856,7 @@ void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord
 			offset[i] += texcoord;
 			sdepth = LDepth(offset[i].xy);
 			snormal = tex2D(sSSSR_NormTex, offset[i].xy).rgb;
-			if(lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold)
+			if((lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold) || HLOut < HistoryFix0)
 			{
 				color += tex2Dlod(sSSSR_FilterTex0, float4(offset[i].xy, 0, lod));//*offset[i].z;
 				samples += 1;//offset[i].z;
@@ -892,14 +896,21 @@ void SpatialFilter1(
 	p *= saturate(Roughness)*pow(2, (lod))*((HLOut>SMALL)?1:1.5);
 	lod = lod*saturate(Roughness);
 	color = tex2Dlod(sSSSR_FilterTex1, float4(texcoord, 0, lod));
-	offset = {float3(0,p.y,2),float3(0,-p.y,2),float3(p.x,0,2),float3(-p.x,0,2),float3(p.x,p.y,4),float3(p.x,-p.y,4),float3(-p.x,p.y,4),float3(-p.x,-p.y,4)};
+	
+	offset = 
+	{
+		float3(0,p.y,2),float3(0,-p.y,2),
+		float3(p.x,0,2),float3(-p.x,0,2),
+		float3(p.x,p.y,4),float3(p.x,-p.y,4),
+		float3(-p.x,p.y,4),float3(-p.x,-p.y,4)
+	};
 	
 	[unroll]for(int i = 0; i <= 7; i++)
 	{
 		offset[i] += texcoord;
 		sdepth = LDepth(offset[i].xy);
 		snormal = tex2D(sSSSR_NormTex, offset[i].xy).rgb;
-		if(lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold)
+		if((lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold) || (HLOut < HistoryFix1))
 		{
 			color += tex2Dlod(sSSSR_FilterTex1, float4(offset[i].xy, 0, lod))*offset[i].z;
 			samples += offset[i].z;
@@ -935,7 +946,7 @@ void output(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float3 Fi
 	if(!GI)FinalColor = lerp(Background.rgb, Reflection.rgb, Reflection.a);
 	
 	if(debug==1)Background.rgb = (GI)?0.5:0;
-	if(GI)FinalColor = lerp(AO.r*Background.rgb + Reflection.rgb*Background.rgb*AO.g, Background.rgb, (HLFix&&!debug==1)?pow(Background.rgb,2):0);
+	if(GI)FinalColor = lerp(AO.r*Background.rgb + Reflection.rgb*Background.rgb*AO.g, Background.rgb, (HLFix&&!debug==1)?pow(abs(Background.rgb),1.5):0);
 	else  FinalColor = lerp(Background.rgb, Reflection.rgb, Reflection.a);
 	if(debug==0)FinalColor = lerp(FinalColor, BGOG.rgb, pow(abs(depth), InvTonemapper(depthfade)));}
 	if(debug==2)FinalColor = depth;
