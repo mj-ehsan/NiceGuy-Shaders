@@ -1,6 +1,6 @@
 //Stochastic Screen Space Ray Tracing
 //Written by MJ_Ehsan for Reshade
-//Version 0.4
+//Version 0.5
 
 //license
 //CC0 ^_^
@@ -38,7 +38,7 @@
 //TO DO
 //1- [v]Add another spatial filtering pass
 //2- [ ]Add Hybrid GI/Reflection
-//3- [ ]Add Simple Mode UI with setup assist
+//3- [v]Add Simple Mode UI with setup assist
 //4- [ ]Add internal comaptibility with Volumetric Fog V1 and V2
 //      By using the background texture provided by VFog to blend the Reflection.
 //      Then Blending back the fog to the image. This way fog affects the reflection.
@@ -54,8 +54,10 @@
 
 #include "ReShadeUI.fxh"
 #include "ReShade.fxh"
+#include "NGLightingUI.fxh"
 
 uniform float Timer < source = "timer"; >;
+uniform float Frame < source = "framecount"; >;
 
 #define pix float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
 
@@ -67,9 +69,15 @@ uniform float Timer < source = "timer"; >;
 ///////////////Include/////////////////////
 ///////////////PreProcessor-Definitions////
 
-#define RAYSTEPS MAXIMUM_RAY_STEPS
+#ifndef UI_DIFFICULTY
+ #define UI_DIFFICULTY 0
+#endif
 
 #define AspectRatio (BUFFER_WIDTH/BUFFER_HEIGHT)          
+
+#ifndef SMOOTH_NORMALS
+ #define SMOOTH_NORMALS 1
+#endif
 
 #ifndef RESOLUTION_SCALE_
  #define RESOLUTION_SCALE_ 0.67
@@ -82,7 +90,7 @@ uniform float Timer < source = "timer"; >;
 //#if INTERPOLATED_RENDER > 0
 // #define RENDER_HEIGHT 0.5
 //#else
- #define RENDER_HEIGHT 1 //Re-enable after (probably) adding interlaced rendering
+ #define RENDER_HEIGHT 1 //WIP.
 //#endif
 
 #ifndef MAX_MipFilter
@@ -94,30 +102,50 @@ uniform float Timer < source = "timer"; >;
  #define MAX_MipFilter 9 //Clamps the value to 9 to avoid compiling issues.
 #endif
 
+//Full res denoising on all passes. Otherwise only Spatial Filter 1 will be full res.
 #ifndef HQ_UPSCALING
  #define HQ_UPSCALING 1
 #endif
 
 //#ifndef HQ_SPECULAR_REPROJECTION
- #define HQ_SPECULAR_REPROJECTION 0
+ #define HQ_SPECULAR_REPROJECTION 0  //WIP!
 //#endif
 
 //Blur radius adaptivity threshold depending on the number of accumulated frames per pixel
-//HL: history length
-//Radius: HL < MEDIUM: 25*25 || HL >= MEDIUM: 5*5 || HL >= SMALL: 3*3
-//Medium disables the first spatial pass. Small reduces the offset of the 2nd pass from 1.5px to 1px.
-#define SMALL  48
-#define MEDIUM 24
-
-//if MAX_Frames > SUPER_SAMPLE_RAYS, ray marching changes the noise pattern every frame. resulting in
-//less noise but also less stable image on low MAX_Frames numbers.
-#define SUPER_SAMPLE_RAYS 8
+#define Off       80  //Default is 160 //no filter
+#define VerySmall 60   //Default is 80  //one 3*3 cross filter, TODO
+#define Small     40   //Default is 40  //one 3*3 box filter
+#define Medium    20   //Default is 20  //one 5*5 box filter
+#define Large     10   //Default is 10  //two pass (3*3 and 3*3) Atrous 9*9 box filter
+#define VeryLarge 5    //Default is 5   //two pass (3*3 and 5*5) Atrous 15*15 box filter
 
 //if the History Length is lower than this threshold, edge avoiding function will be ignored to make
 //sure the temporally underaccumulated pixel is getting enough spatial accumulation.
 //HistoryFix0 should be lower or equal to HistoryFix1 in order to avoid artifacts.
-#define HistoryFix0 2 //for the Spatial Filter 0
-#define HistoryFix1 4 //for the Spatial Filter 1
+#define HistoryFix0 1 //for the Spatial Filter 0  Default is 1
+#define HistoryFix1 2 //for the Spatial Filter 1. Default is 2
+
+//Motion Based Deghostin Threshold is the minimum value to be multiplied to the history length.
+//Higher value causes more ghosting but less blur. Too low values might result in strong flickering in motion.
+#define MBSDThreshold 0.05 //Default is 0.05
+#define MBSDMultiplier 90 //Default is 90
+
+//Temporal Refine min blend value. lower is more stable but ghosty and too low values may introduce banding
+#define TRThreshold 0.001
+
+//Smooth Normals configs. It uses a separable bilateral blur which uses only normals as determinator. 
+#define SNThreshold 0.5 //Bilateral Blur Threshold for Smooth normals passes
+#if SMOOTH_NORMALS <= 1 //13*13 10taps
+ #define SNWidth 6 //Blur pixel offset for Smooth Normals
+ #define SNSamples 1 //actually SNSamples*4+6!
+#elif SMOOTH_NORMALS == 2 //17*17 14taps
+ #define SNWidth 4
+ #define SNSamples 2
+#elif SMOOTH_NORMALS > 2 //41*41 86taps
+ #warning "SMOOTH_NORMALS 3 is slow and should to be used for photography or old games. Otherwise set to 2 or 1."
+ #define SNWidth 1
+ #define SNSamples 20
+#endif
 
 ///////////////PreProcessor-Definitions////
 ///////////////Textures-Samplers///////////
@@ -166,6 +194,9 @@ sampler sSSSR_PNormalTex { Texture = SSSR_PNormalTex; };
 texture SSSR_NormTex  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
 sampler sSSSR_NormTex { Texture = SSSR_NormTex; };
 
+texture SSSR_NormTex1  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
+sampler sSSSR_NormTex1 { Texture = SSSR_NormTex1; };
+
 texture SSSR_PosTex  { Width = BUFFER_WIDTH*RESOLUTION_SCALE_; Height = BUFFER_HEIGHT*RESOLUTION_SCALE_*RENDER_HEIGHT; Format = RGBA8; };
 sampler sSSSR_PosTex { Texture = SSSR_PosTex; };
 
@@ -178,10 +209,8 @@ sampler sSSSR_HLTex1 { Texture = SSSR_HLTex1; };
 texture SSSR_MaskTex { Width = BUFFER_WIDTH*RESOLUTION_SCALE_; Height = BUFFER_HEIGHT*RESOLUTION_SCALE_*RENDER_HEIGHT; Format = R8; };
 sampler sSSSR_MaskTex { Texture = SSSR_MaskTex; };
 
-#if HQ_SPECULAR_REPROJECTION
-texture SSSR_HitDistTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = R8; };
+texture SSSR_HitDistTex { Width = BUFFER_WIDTH*RESOLUTION_SCALE_; Height = BUFFER_HEIGHT*RESOLUTION_SCALE_*RENDER_HEIGHT; Format = RGBA16f; };
 sampler sSSSR_HitDistTex { Texture = SSSR_HitDistTex; };
-#endif //HQ_SPECULAR_REPROJECTION
 #else //HQ_UPSCALING
 
 texture SSSR_POGColTex  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
@@ -211,6 +240,9 @@ sampler sSSSR_PNormalTex { Texture = SSSR_PNormalTex; };
 texture SSSR_NormTex  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
 sampler sSSSR_NormTex { Texture = SSSR_NormTex; };
 
+texture SSSR_NormTex1  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
+sampler sSSSR_NormTex1 { Texture = SSSR_NormTex1; };
+
 texture SSSR_PosTex  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
 sampler sSSSR_PosTex { Texture = SSSR_PosTex; };
 
@@ -223,10 +255,8 @@ sampler sSSSR_HLTex1 { Texture = SSSR_HLTex1; };
 texture SSSR_MaskTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = R8; };
 sampler sSSSR_MaskTex { Texture = SSSR_MaskTex; };
 
-#if HQ_SPECULAR_REPROJECTION
-texture SSSR_HitDistTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = R8; };
+texture SSSR_HitDistTex { Width = BUFFER_WIDTH*RESOLUTION_SCALE_; Height = BUFFER_HEIGHT*RESOLUTION_SCALE_*RENDER_HEIGHT; Format = RGBA16f; };
 sampler sSSSR_HitDistTex { Texture = SSSR_HitDistTex; };
-#endif //HQ_SPECULAR_REPROJECTION
 #endif //HQ_UPSCALING
 
 texture SSSR_PAvglumTex0 { Width = 1; Height = 1; Format = R8; };
@@ -237,279 +267,6 @@ sampler sSSSR_PAvglumTex1 { Texture = SSSR_PAvglumTex1; };
 
 ///////////////Textures-Samplers///////////
 ///////////////UI//////////////////////////
-
-uniform int Hints<
-	ui_text = "This shader is in -ALPHA PHASE-, expect bugs.\n\n"
-			  "Advanced categories are unnecessary options that\n"
-			  "can break the look of the shader if modified\n"
-			  "improperly. Modification of the shader will be\n"
-			  "simplified in the future. These complex settings\n"
-			  "of the current version will be kept and are accesible\n"
-			  "Using PreProcessor Defenitions.\n\n"
-			  "To use NiceGuy Lighting for reflections, do all these steps:\n"
-			  "1- Blending Options > GI Mode : off\n"
-			  "4- Color Management > Inverse Tonemapper Intensity : reduce\n"; //
-			  
-	ui_category = "Hints - Please Read for good results";
-	ui_category_closed = true;
-	ui_label = " ";
-	ui_type = "radio";
->;
-
-uniform bool GI <
-	ui_label = "GI Mode";
-	ui_tooltip = "Enable this and set (Roughness) to 2 to achieve GI.";
-> = 1;
-
-uniform float fov <
-	ui_label = "Field of View";
-	ui_type = "slider";
-	ui_category = "Ray Tracing";
-	ui_tooltip = "Set it according to the game's field of view.";
-	ui_min = 50;
-	ui_max = 120;
-> = 70;
-
-uniform float BUMP <
-	ui_label = "Bump mapping";
-	ui_type = "slider";
-	ui_category = "Ray Tracing";
-	ui_tooltip = "Makes shiny reflections more detailed.";
-	ui_min = 0.0;
-	ui_max = 1;
-> = 1;
-
-uniform float roughness <
-	ui_label = "Roughness";
-	ui_type = "slider";
-	ui_category = "Ray Tracing";
-	ui_tooltip = "Set to 1 for GI.";
-	ui_min = 0.0;
-	ui_max = 1.0;
-> = 0.4;
-
-uniform bool TemporalRefine <
-	ui_label = "Temporal Refining (EXPERIMENTAL)";
-	ui_category = "Ray Tracing (Advanced)";
-	ui_tooltip = "EXPERIMENTAL! Expect issues\n"
-				 "Reduce (Surface depth) and increase (Step Length Jitter)\n"
-				 "Then enable this option to have more accurate Ray Marching.";
-	ui_category_closed = true;
-> = 0;
-//#define TemporalRefine false
-
-uniform float RAYINC <
-	ui_label = "Ray Increment";
-	ui_type = "slider";
-	ui_category = "Ray Tracing (Advanced)";
-	ui_tooltip = "Increases ray length at the cost of accuracy.";
-	ui_category_closed = true;
-	ui_min = 0;
-	ui_max = 2;
-> = 2;
-
-uniform uint UI_RAYSTEPS <
-	ui_label = "Max Steps"; 
-	ui_type = "slider";
-	ui_category = "Ray Tracing (Advanced)";
-	ui_tooltip = "Increases ray length at the cost of performance.";
-	ui_category_closed = true;
-	ui_min = 1;
-	ui_max = 32;
-> = 16;
-
-uniform float RAYDEPTH <
-	ui_label = "Surface depth";
-	ui_type = "slider";
-	ui_category = "Ray Tracing (Advanced)";
-	ui_tooltip = "More coherency at the cost of accuracy.";
-	ui_category_closed = true;
-	ui_min = 0.05;
-	ui_max = 10;
-> = 2;
-//#define RAYDEPTH 10000
-
-uniform float STEPNOISE <
-	ui_label = "Step Length Jitter";
-	ui_type = "slider";
-	ui_category = "Ray Tracing (Advanced)";
-	ui_tooltip = "Reduces artifacts but produces more noise.\n";
-				 //"Read (Temporal Refining)'s tooltip for more.";
-	ui_category_closed = true;
-	ui_min = 0.0;
-	ui_max = 1;
-> = 0.15;
-
-uniform float Tthreshold <
-	ui_label = "Temporal Denoiser Threshold";
-	ui_type = "slider";
-	ui_category = "Denoiser (Advanced)";
-	ui_tooltip = "Reduces noise but produces more ghosting.";
-	ui_category_closed = true;
-> = 0.015;
-
-uniform int MAX_Frames <
-	ui_label = "History Length";
-	ui_type = "slider";
-	ui_category = "Denoiser (Advanced)";
-	ui_tooltip = "Higher values increase both the blur size\n"
-				 "and the temporal accumulation effectiveness.";
-	ui_category_closed = true;
-	ui_min = 1;
-	ui_max = 64;
-> = 64;
-
-uniform float Sthreshold <
-	ui_label = "Spatial Denoiser Threshold";
-	ui_type = "slider";
-	ui_category = "Denoiser (Advanced)";
-	ui_tooltip = "Reduces noise at the cost of detail.";
-	ui_category_closed = true;
-> = 0.015;
-
-uniform bool DualPass <
-	ui_type = "radio";
-	ui_label = "Additional Filtering";
-	ui_category = "Denoiser (Advanced)";
-	ui_tooltip = "Makes blur more stable at the little cost of performance.";
-	ui_category_closed = true;
-> = 1;
-
-uniform bool HLFix <
-	ui_label = "Fix Highlights";
-	ui_category = "Blending Options";
-	ui_tooltip = "Fixes bad blending in bright areas of background/reflections.";
-> = 1;
-
-uniform float EXP <
-	ui_label = "Psuedo-Fresnel Exponent";
-	ui_type = "slider";
-	ui_category = "Blending Options";
-	ui_tooltip = "Blending intensity for shiny materials. Doesn't work on GI mode.";
-	ui_min = 1;
-	ui_max = 10;
-> = 4;
-
-uniform float AO_Radius_Background <
-	ui_label = "Image AO";
-	ui_type = "slider";
-	ui_category = "Blending Options";
-	ui_tooltip = "Radius of the effective Ray Marched AO.";
-> = 0.4;
-
-uniform float AO_Radius_Reflection <
-	ui_label = "GI AO";
-	ui_type = "slider";
-	ui_category = "Blending Options";
-	ui_tooltip = "Radius of the effective Ray Marched AO.";
-> = 0.2;
-
-uniform float AO_Intensity <
-	ui_label = "AO Power";
-	ui_type = "slider";
-	ui_category = "Blending Options";
-	ui_tooltip = "Power of both layers of AO.";
-> = 1;
-
-uniform float depthfade <
-	ui_label = "Depth Fade";
-	ui_type = "slider";
-	ui_category = "Blending Options";
-	ui_tooltip = "Higher values decrease the intesity on distant objects.\n"
-				 "Reduces blending issues with in-game fogs.";
-	ui_min = 0;
-	ui_max = 1;
-> = 0.8;
-
-uniform bool LinearConvert <
-	ui_type = "radio";
-	ui_label = "sRGB to Linear";
-	ui_category = "Color Management";
-	ui_tooltip = "Converts from sRGB to Linear";
-	ui_category_closed = true;
-> = 1;
-
-uniform float IT_Intensity <
-	ui_type = "slider";
-	ui_label = "Inverse Tonemapper Intensity";
-	ui_category = "Color Management";
-	ui_tooltip = "intensity of Inverse Tonemapping";
-	ui_category_closed = true;
-	ui_max = 0.9;
-> = 0.5;
-
-uniform float2 SatExp <
-	ui_type = "slider";
-	ui_label = "Saturation || Exposure";
-	ui_category = "Color Management";
-	ui_tooltip = "Left slider is Saturation. Right one is Exposure.";
-	ui_category_closed = true;
-	ui_min = 0;
-	ui_max = 2;
-> = float2(1,1);
-
-uniform uint debug <
-	ui_type = "combo";
-	ui_items = "None\0Reflections\0Depth\0Normal\0TempDebugView\0";
-	ui_category = "Extra";
-	ui_category_closed = true;
-	ui_min = 0;
-	ui_max = 4;
-> = 0;
-
-uniform float SkyDepth <
-	ui_type = "slider";
-	ui_label = "Sky Masking Depth";
-	ui_tooltip = "Minimum depth to consider sky and exclude from the calculation.";
-	ui_category = "Extra";
-	ui_category_closed = true;
-> = 0.99;
-
-/*uniform float TEMP_UIVAR <
-	ui_type = "slider";
-	ui_category = "Debug";
-	ui_min = 0;
-	ui_max = 1;
-> = 0.25;*/
-
-uniform int Credits<
-	ui_text = "Thanks Lord of Lunacy, Leftfarian, and other devs for helping me. <3\n"
-			  "Thanks Alea for testing.<3\n\n"
-
-			  "Credits:\n"
-			  "Thanks Crosire for ReShade.\n"
-			  "https://reshade.me/\n\n"
-
-			  "Thanks Jakob for DRME.\n"
-			  "https://github.com/JakobPCoder/ReshadeMotionEstimation\n\n"
-
-			  "I learnt as lot from qUINT_SSR. Thanks Pascal Gilcher.\n"
-			  "https://github.com/martymcmodding/qUINT\n\n"
-
-			  "Also a lot from DH_RTGI. Thanks Demien Hambert.\n"
-			  "https://github.com/AlucardDH/dh-reshade-shaders\n\n"
-			  
-			  "Thanks Nvidia for <<Ray Tracing Gems II>> for ReBlur\n"
-			  "https://link.springer.com/chapter/10.1007%2F978-1-4842-7185-8_49\n\n"
-
-			  "Thanks Radegast for Unity Sponza Test Scene.\n"
-			  "https://mega.nz/#!qVwGhYwT!rEwOWergoVOCAoCP3jbKKiuWlRLuHo9bf1mInc9dDGE\n\n"
-
-			  "Thanks Timothy Lottes and AMD for the Tonemapper and the Inverse Tonemapper.\n"
-			  "https://gpuopen.com/learn/optimized-reversible-tonemapper-for-resolve/\n\n"
-
-			  "Thanks Eric Reinhard for the Luminance Tonemapper and  the Inverse.\n"
-			  "https://www.cs.utah.edu/docs/techreports/2002/pdf/UUCS-02-001.pdf\n\n"
-
-			  "Thanks sujay for the noise function. Ported from ShaderToy.\n"
-			  "https://www.shadertoy.com/view/lldBRn";
-			  
-	ui_category = "Credits";
-	ui_category_closed = true;
-	ui_label = " ";
-	ui_type = "radio";
->;
-
 ///////////////UI//////////////////////////
 ///////////////Vertex Shader///////////////
 ///////////////Vertex Shader///////////////
@@ -533,9 +290,9 @@ float noise(float2 co)
   return frac(sin(dot(co.xy ,float2(1.0,73))) * 437580.5453);
 }
 
-float3 noise3dts(float2 co, float s, bool t)
+float3 noise3dts(float2 co, float s, float frame)
 {
-	co += sin(Timer/120.347668756453546)*t;
+	co += sin(frame/120.347668756453546);
 	co += s/16.3542625435332254;
 	return float3( noise(co), noise(co+0.6432168421), noise(co+0.19216811));
 }
@@ -550,15 +307,25 @@ float3 UVtoPos(float2 texcoord)
 	return scrncoord.xyz;
 }
 
-float2 PostoUV(float3 position)
+float3 UVtoPos(float2 texcoord, float depth)
 {
-	float2 scrnpos = position.xy;
-	scrnpos /= rad(fov/2);
-	scrnpos.x /= AspectRatio;
-	scrnpos /= position.z;
+	float3 scrncoord = float3(texcoord.xy*2-1, depth * RESHADE_DEPTH_LINEARIZATION_FAR_PLANE);
+	scrncoord.xy *= scrncoord.z * (rad(fov*0.5));
+	scrncoord.x *= AspectRatio;
+	//scrncoord.xy *= ;
 	
-	return scrnpos/2 + 0.5;
+	return scrncoord.xyz;
 }
+
+	float2 PostoUV(float3 position)
+	{
+		float2 scrnpos = position.xy;
+		scrnpos /= rad(fov/2);
+		scrnpos.x /= AspectRatio;
+		scrnpos /= position.z;
+		
+		return scrnpos/2 + 0.5;
+	}
 	
 
 float3 Normal(float2 texcoord)
@@ -699,32 +466,65 @@ void GBuffer1
 	out float3 normal : SV_Target) //SSSR_NormTex
 {
 	normal = Normal(texcoord.xy);
+#if SMOOTH_NORMALS <= 0
 	normal = blend_normals( Bump(texcoord, BUMP), normal);
-	//normal = normal * 0.5 + 0.5;
+#endif
+}
+
+float3 SNH(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
+{
+	float4 color = float4(tex2D(sSSSR_NormTex, texcoord).rgb, 1);
+	float  depth = LDepth(texcoord).r;
+	float4 s, s1;
+	s.a = 1;
+	float2 p = pix; p*=SNWidth;
+	float T = SNThreshold * saturate(2*(1-depth));
+	for (int i = -SNSamples; i <= SNSamples; i++)
+	{
+		s.rgb = tex2D(sSSSR_NormTex, texcoord + float2(i*p.x, 0)).rgb;
+		float  diff  = dot(0.333, abs(s.rgb - color.rgb));
+		if( diff < T + 0.0001){s1 += s;}
+	}
+	return s1.rgb/s1.a;
+}
+
+float3 SNV(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
+{
+	float4 color = float4(tex2D(sSSSR_NormTex1, texcoord).rgb, 1);
+	float  depth = LDepth(texcoord).r;
+	float4 s, s1;
+	s.a = 1;
+	float2 p = pix; p*=SNWidth;
+	float T = SNThreshold * saturate(2*(1-depth));
+	for (int i = -SNSamples; i <= SNSamples; i++)
+	{
+		s.rgb = tex2D(sSSSR_NormTex1, texcoord + float2(0, i*p.y)).rgb;
+		float diff = dot(0.333, abs(s.rgb - color.rgb));
+		if( diff < T/2 + 0.0001){s1 += s;}
+	}
+	s1.rgb = s1.rgb/s1.a;
+	s1.rgb = blend_normals( Bump(texcoord, BUMP), s1.rgb);
+	return s1.rgb;
 }
 
 void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0
 #if HQ_SPECULAR_REPROJECTION
-,out float HitDist : SV_Target1
+,out float4 HitData : SV_Target1
 #endif
 )
 {
 	float3 depth    = LDepth  (texcoord); 
 #if HQ_SPECULAR_REPROJECTION
-	HitDist = 0;
+	HitData = 0;
 #endif
 	FinalColor.rgba = float4(tex2D(sTexColor, texcoord).rgb, 0);
 	if(depth.x<SkyDepth){
-		float3 reflection, Check, image, position, normal, eyedir, raydirR, raydirG, raydir, raypos, noise; float2 UVraypos, p, Itexcoord; float a, raybias, StepNoise, steplength; uint i, j; bool hit;
+		float3 reflection, Check, image, position, normal, eyedir, raydirR, raydirG, raydir, raypos, noise; float2 UVraypos, p, Itexcoord; float a, raybias, StepNoise, steplength, HL; uint i, j; bool hit;
 		p = pix;
 		Itexcoord = texcoord + float2(0, p.y);
-		//noise.r = tex2Dfetch( sSSSR_Noise, vpos.xy%64).r;
-		//noise.g = tex2Dfetch( sSSSR_Noise, vpos.xy%64+64).r;
-		//noise.b = tex2Dfetch( sSSSR_Noise, vpos.xy%64+128).r;
-		//noise = noise * 0.5 + 0.5;
-		noise = noise3dts(texcoord, 0, MAX_Frames > SUPER_SAMPLE_RAYS);
+		HL = tex2D(sSSSR_HLTex0, texcoord).r;
+		noise = noise3dts(texcoord, 0, Frame%HL);
 		
-		float HL = tex2D(sSSSR_HLTex0, texcoord).r;
 		position = UVtoPos (texcoord);
 		normal   = tex2D(sSSSR_NormTex, texcoord).rgb;
 		eyedir   = normalize(position);
@@ -761,10 +561,11 @@ void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 		if(GI&&LinearConvert)FinalColor.rgb = pow(abs(FinalColor.rgb), 1 / 2.2);
 		FinalColor.rgb = clamp(InvTonemapper(FinalColor.rgb), -1000, 1000);
 		
-		if(!GI)FinalColor.a = a*lerp(0.05, 1, (pow(abs(1 - dot(normal, eyedir)), EXP)));
+		if(!GI)FinalColor.a = a;
 		if( GI)FinalColor.a = saturate(distance(raypos, position)/100);
 #if HQ_SPECULAR_REPROJECTION
-		HitDist = distance(raypos, position);
+		HitData.rgb = raypos;
+		HitData.a = distance(raypos, position);
 #endif
 		FinalColor.rgb *= a;
 	}//depth check if end
@@ -793,14 +594,15 @@ void TemporalFilter0(float4 vpos : SV_Position, float2 texcoord : TexCoord, out 
 	outbound = texcoord + MotionVectors;
 	outbound = float2(max(outbound.r, outbound.g), min(outbound.r, outbound.g));
 	outbound.rg = (outbound.r > 1 || outbound.g < 0);
-	mask = abs(lum(normal) - lum(past_normal)) + abs(depth - past_depth) + abs(lum(ogcolor - past_ogcolor))*200000 > Tthreshold;
+	mask = abs(lum(normal) - lum(past_normal)) + abs(depth - past_depth)*2 + abs(lum(ogcolor - past_ogcolor))*200000 > Tthreshold;
 	mask = max(mask, outbound.r);
 	}//sky mask end
 }
 
 void TemporalFilter1(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0, out float HLOut : SV_Target1)
 {
-	float4 Current, History; float2 MotionVectors, p; float mask, HistoryLength;
+	float depth = LDepth(texcoord);
+	float4 Current, History; float3 Xvirtual, eyedir; float2 MotionVectors, p, pixelUvVirtualPrev; float past_depth, mask, HistoryLength;
 	
 	MotionVectors = sampleMotion(texcoord);
 	HistoryLength = tex2D(sSSSR_HLTex1, texcoord + MotionVectors).r;
@@ -809,45 +611,69 @@ void TemporalFilter1(float4 vpos : SV_Position, float2 texcoord : TexCoord, out 
 	p = p/RESOLUTION_SCALE_;
 #endif
 #if HQ_SPECULAR_REPROJECTION
+	float NoV, SDF; float4 HitDist, gWorldToClipPrev; 
 	if(!GI)
 	{
-		float NoV = dot(normalize(UVtoPos(texcoord)), Normal(texcoord));
-		float SDF = GetSpecularDominantFactor(NoV, roughness);
-		float HitDist = tex2D(sSSSR_HitDistTex, texcoord);
+		past_depth = tex2D(sSSSR_PDepthTex, texcoord + MotionVectors).r;
+		gWorldToClipPrev = UVtoPos(texcoord + MotionVectors, past_depth);
+			eyedir  = normalize(UVtoPos(texcoord));
+		NoV     = dot(eyedir, Normal(texcoord));
+		SDF     = GetSpecularDominantFactor(NoV, roughness);
+		HitDist = tex2D(sSSSR_HitDistTex, texcoord);
+		Xvirtual = HitDist.rgb - eyedir * HitDist.a;
+		pixelUvVirtualPrev = PostoUV( gWorldToClipPrev.rgb + Xvirtual/1000);
 	}
 #endif
 	mask = 1-dilate(sSSSR_MaskTex, texcoord, p, 0);
 	
 	Current = tex2D(sSSSR_ReflectionTex, texcoord).rgba;
 	History = tex2D(sSSSR_FilterTex2, texcoord + MotionVectors).rgba;
+	HistoryLength = tex2D(sSSSR_HLTex1, texcoord + MotionVectors).r;
 	
 	HistoryLength *= mask; //sets the history length to 0 for discarded samples
 	HLOut = HistoryLength + mask; //+1 for accepted samples
 	HLOut = min(HLOut, MAX_Frames*max(sqrt((GI)?1:roughness), max(0.0001, STEPNOISE))); //Limits the linear accumulation to MAX_Frames, The rest will be accumulated exponentialy with the speed = (1-1/Max_Frames)
-
-	if( TemporalRefine)FinalColor = lerp(History, Current, min((Current.a != 0) ? 1/HLOut : 0.002, mask));
-	if(!TemporalRefine)FinalColor = lerp(History, Current, min(                   1/HLOut,        mask));
+	
+	if(!GI)HLOut = HLOut * max(saturate(1-length(MotionVectors)*(1-roughness)*MBSDMultiplier), MBSDThreshold); //Motion Vector Based Deghosting for specular reflections
+	
+	HLOut = max(HLOut, 0.001);
+	if( TemporalRefine)FinalColor = lerp(History, Current, min((Current.a != 0) ? 1/HLOut : TRThreshold, mask));
+	if(!TemporalRefine)FinalColor = lerp(History, Current, min(                   1/HLOut,         mask));
 }
-
+//Blur adaptivity agains History Length.
+//Shape |Win|Name     |Offsets
+//1     :1   Off       0.0-0.0 //TODO for GI
+//3cross:5   VerySmall 1.0-0.0 //TODO
+//3*1=3 :9   Small     1.0-0.0
+//5*1=5 :25  Medium    1.5-0.0
+//3*3=9 :81  Large     1.0-3.0
+//5*3=15:225 VeryLarge 1.5-5.0
 void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0)
 {
 	float HLOut = tex2D(sSSSR_HLTex0, texcoord).r;
-	if(DualPass&&HLOut<=MEDIUM||RESOLUTION_SCALE_<=0.5)
+	if(HLOut<Medium)
 	{
-		float4 color; float3 snormal, normal, ogcol; float3 offset[8], p; float HLOut, sdepth, depth, lod, samples, roughness;
+		float4 color; float3 snormal, normal, ogcol; float3 offset[8], p; float HLOut, sdepth, depth, lod, samples, Roughness, HitDist, radius;
 	
 		p = pix;
 		samples = 1;
-		roughness = (GI)?1:roughness;
+		Roughness = (GI)?1:roughness;
+		HitDist = tex2D(sSSSR_HitDistTex, texcoord).a;
 		normal = tex2D(sSSSR_NormTex, texcoord).rgb;
 		depth = LDepth(texcoord);
 		ogcol = tex2D(sTexColor, texcoord).rgb;
 		
 		HLOut = tex2D(sSSSR_HLTex0, texcoord).r;
-		lod = min(MAX_MipFilter, max(0, (MAX_MipFilter)-HLOut));
+		radius = GI?1:saturate(Roughness*8/HLOut)*saturate((HitDist*5)/RESHADE_DEPTH_LINEARIZATION_FAR_PLANE);
+		lod = min(MAX_MipFilter, max(0, (MAX_MipFilter)-HLOut))*radius;
 		//lod = 0;
-		p *= saturate(roughness)*pow(2, (lod))*5;
-		lod = lod*saturate(roughness);
+		
+#if HQ_UPSCALING
+	p *= radius*pow(2, (lod))*((HLOut<VeryLarge)?5:3)*rcp(RESOLUTION_SCALE_);
+#else
+	p *= radius*pow(2, (lod))*((HLOut<VeryLarge)?5:3);
+#endif
+		lod = lod*saturate(Roughness);
 		color = tex2Dlod(sSSSR_FilterTex0, float4(texcoord, 0, lod));
 		offset = {float3(0,p.y,2),float3(0,-p.y,2),float3(p.x,0,2),float3(-p.x,0,2),float3(p.x,p.y,4),float3(p.x,-p.y,4),float3(-p.x,p.y,4),float3(-p.x,-p.y,4)};
 		
@@ -856,7 +682,7 @@ void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord
 			offset[i] += texcoord;
 			sdepth = LDepth(offset[i].xy);
 			snormal = tex2D(sSSSR_NormTex, offset[i].xy).rgb;
-			if((lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold) || HLOut < HistoryFix0)
+			if((lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold) || (HLOut < HistoryFix0 && MAX_Frames > HistoryFix0))
 			{
 				color += tex2Dlod(sSSSR_FilterTex0, float4(offset[i].xy, 0, lod));//*offset[i].z;
 				samples += 1;//offset[i].z;
@@ -881,19 +707,26 @@ void SpatialFilter1(
 	out float3 ogcol      : SV_Target3,//POGColTex
 	out float  HLOut      : SV_Target4)//HLTex1
 {
-	float4 color; float3 snormal; float3 offset[8], p; float sdepth, lod, samples, Roughness;
+	float4 color; float3 snormal; float3 offset[8], p; float sdepth, lod, samples, Roughness, HitDist, radius;
 
 	p = pix;
 	samples = 1;
 	Roughness = (GI)?1:roughness;
+	HitDist = tex2D(sSSSR_HitDistTex, texcoord).a;
 	normal = tex2D(sSSSR_NormTex, texcoord).rgb;
 	depth = LDepth(texcoord);
 	ogcol = tex2D(sTexColor, texcoord).rgb;
 	
 	HLOut = tex2D(sSSSR_HLTex0, texcoord).r;
-	lod = min(MAX_MipFilter, max(0, (MAX_MipFilter)-HLOut));
+	radius = GI?1:saturate(Roughness*8/HLOut)*saturate((HitDist*5)/RESHADE_DEPTH_LINEARIZATION_FAR_PLANE);
+	if(HLOut>Off) radius *= (MAX_Frames-HLOut)/MAX_Frames;
+	lod = min(MAX_MipFilter, max(0, (MAX_MipFilter)-HLOut))*radius;
 	//lod = 0;
-	p *= saturate(Roughness)*pow(2, (lod))*((HLOut>SMALL)?1:1.5);
+#if HQ_UPSCALING
+	p *= radius*pow(2, (lod))*((HLOut<VeryLarge||HLOut>=Medium)?1.5:1)*rcp(RESOLUTION_SCALE_);
+#else
+	p *= radius*pow(2, (lod))*((HLOut<VeryLarge||HLOut>=Medium)?1.5:1);
+#endif
 	lod = lod*saturate(Roughness);
 	color = tex2Dlod(sSSSR_FilterTex1, float4(texcoord, 0, lod));
 	
@@ -910,7 +743,7 @@ void SpatialFilter1(
 		offset[i] += texcoord;
 		sdepth = LDepth(offset[i].xy);
 		snormal = tex2D(sSSSR_NormTex, offset[i].xy).rgb;
-		if((lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold) || (HLOut < HistoryFix1))
+		if((lum(abs(snormal - normal))+abs(sdepth-depth) < Sthreshold) || (HLOut < HistoryFix1 && MAX_Frames > HistoryFix1))
 		{
 			color += tex2Dlod(sSSSR_FilterTex1, float4(offset[i].xy, 0, lod))*offset[i].z;
 			samples += offset[i].z;
@@ -923,60 +756,70 @@ void SpatialFilter1(
 	
 void output(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float3 FinalColor : SV_Target0)
 {
-	float4 Background, Reflection; float3 albedo, BGOG; float2 AO; float depth;
+	float4 Background, Reflection; float3 albedo, BGOG, normal; float2 AO; float depth, Fresnel;
 	
 	Background   = tex2D(sTexColor, texcoord).rgba;
 	depth        = LDepth(texcoord);
 	if(depth>=SkyDepth){FinalColor = Background.rgb;} else{
 	BGOG		 = Background.rgb;
 	Reflection   = tex2D(sSSSR_FilterTex2, texcoord).rgba;
-	AO.r         = saturate(Reflection.a / AO_Radius_Background);
-	AO.g         = saturate(Reflection.a / AO_Radius_Reflection);
-	AO = pow(AO, AO_Intensity);
+	
+	if(!GI){
+	normal = tex2D(sSSSR_NormTex, texcoord).rgb;
+	Fresnel      = lerp(0.05, 1, (pow(abs(1 - dot(normal, normalize(UVtoPos (texcoord)))), lerp(EXP, 0, roughness))));}
+	
+	if(GI){
+	AO.r = saturate(Reflection.a / AO_Radius_Background);
+	AO.g = saturate(Reflection.a / AO_Radius_Reflection);
+	AO = pow(AO, AO_Intensity);}
 	
 	if(GI)if(LinearConvert) Reflection.rgb = pow(abs(Reflection.rgb), 2.2);
 	Reflection.rgb = Tonemapper(Reflection.rgb);
 	
-	Reflection.rgb = lerp(lum(Reflection.rgb), Reflection.rgb, SatExp.r);
-	
-	Reflection.rgb *= SatExp.g;
+	Reflection.rgb = lerp(lum(Reflection.rgb), Reflection.rgb, SatExp.r); Reflection.rgb *= SatExp.g;
 	
 	albedo = lerp(Background.rgb, Background.rgb/dot(Background.rgb, 1), 0);
-	if( GI)FinalColor = lerp(Background.rgb, Reflection.rgb*albedo, Reflection.a);
-	if(!GI)FinalColor = lerp(Background.rgb, Reflection.rgb, Reflection.a);
 	
 	if(debug==1)Background.rgb = (GI)?0.5:0;
 	if(GI)FinalColor = lerp(AO.r*Background.rgb + Reflection.rgb*Background.rgb*AO.g, Background.rgb, (HLFix&&!debug==1)?pow(abs(Background.rgb),1.5):0);
-	else  FinalColor = lerp(Background.rgb, Reflection.rgb, Reflection.a);
+	else  FinalColor = lerp( lerp(Background.rgb, Reflection.rgb, Fresnel), Background.rgb,  (HLFix&&!debug==1)?pow(abs(Background.rgb),1.5):0);
 	if(debug==0)FinalColor = lerp(FinalColor, BGOG.rgb, pow(abs(depth), InvTonemapper(depthfade)));}
 	if(debug==2)FinalColor = depth;
 	if(debug==3)FinalColor = tex2D(sSSSR_NormTex, texcoord).rgb * 0.5 + 0.5;
 	if(debug==4)FinalColor = tex2D(sSSSR_HLTex1, texcoord).r/MAX_Frames;
-	//FinalColor = BGOG/lum(BGOG);
+	//FinalColor = tex2D(sSSSR_HitDistTex, texcoord).rgb/1000;
 }
 
 ///////////////Pixel Shader////////////////
 ///////////////Techniques//////////////////
 technique NGLighting<
 	ui_label = "NiceGuy Lighting (GI/Reflection)";
-	ui_tooltip = "      NiceGuy Lighting 0.1alpha      \n"
-				 "           ||By Ehsan2077||          \n"
-				 "|Use with  DRME  at quarter  detail.|\n"
-				 "|And don't forget to read the hints.|";
+	ui_tooltip = "             NiceGuy Lighting 0.5alpha             \n"
+				 "                  ||By Ehsan2077||                 \n"
+				 "|Use with ReShade_MotionVectors at quarter detail.|\n"
+				 "|And    don't   forget    to   read   the   hints.|";
 >
 {
-	pass
-	{
-		VertexShader  = PostProcessVS;
-		PixelShader   = GBuffer0;
-		RenderTarget0 = SSSR_PosTex;
-	}
 	pass
 	{
 		VertexShader  = PostProcessVS;
 		PixelShader   = GBuffer1;
 		RenderTarget0 = SSSR_NormTex;
 	}
+#if SMOOTH_NORMALS > 0
+	pass SmoothNormalHpass
+	{
+		VertexShader = PostProcessVS;
+		PixelShader = SNH;
+		RenderTarget = SSSR_NormTex1;
+	}
+	pass SmoothNormalVpass
+	{
+		VertexShader = PostProcessVS;
+		PixelShader = SNV;
+		RenderTarget = SSSR_NormTex;
+	}
+#endif
 	pass
 	{
 		VertexShader  = PostProcessVS;
