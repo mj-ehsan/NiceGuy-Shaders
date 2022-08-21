@@ -507,16 +507,12 @@ float3 SNV(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 	return s1.rgb;
 }
 
-void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0
-#if HQ_SPECULAR_REPROJECTION
-,out float4 HitData : SV_Target1
-#endif
+void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 FinalColor : SV_Target0, out float4 HitData : SV_Target1
+
 )
 {
 	float3 depth    = LDepth  (texcoord); 
-#if HQ_SPECULAR_REPROJECTION
 	HitData = 0;
-#endif
 	FinalColor.rgba = float4(tex2D(sTexColor, texcoord).rgb, 0);
 	if(depth.x<SkyDepth){
 		float3 reflection, Check, image, position, normal, eyedir, raydirR, raydirG, raydir, raypos, noise; float2 UVraypos, p, Itexcoord; float a, raybias, StepNoise, steplength, HL; uint i, j; bool hit;
@@ -563,10 +559,8 @@ void RayMarch(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float4 
 		
 		if(!GI)FinalColor.a = a;
 		if( GI)FinalColor.a = saturate(distance(raypos, position)/100);
-#if HQ_SPECULAR_REPROJECTION
 		HitData.rgb = raypos;
 		HitData.a = distance(raypos, position);
-#endif
 		FinalColor.rgb *= a;
 	}//depth check if end
 }
@@ -787,7 +781,7 @@ void output(float4 vpos : SV_Position, float2 texcoord : TexCoord, out float3 Fi
 	if(debug==2)FinalColor = depth;
 	if(debug==3)FinalColor = tex2D(sSSSR_NormTex, texcoord).rgb * 0.5 + 0.5;
 	if(debug==4)FinalColor = tex2D(sSSSR_HLTex1, texcoord).r/MAX_Frames;
-	//FinalColor = tex2D(sSSSR_HitDistTex, texcoord).rgb/1000;
+	//FinalColor = tex2D(sSSSR_HitDistTex, texcoord).a/1000;
 }
 
 ///////////////Pixel Shader////////////////
@@ -825,9 +819,7 @@ technique NGLighting<
 		VertexShader  = PostProcessVS;
 		PixelShader   = RayMarch;
 		RenderTarget0 = SSSR_ReflectionTex;
-#if HQ_SPECULAR_REPROJECTION
 		RenderTarget1 = SSSR_HitDistTex;
-#endif
 	}
 	pass
 	{
