@@ -1,17 +1,26 @@
 //Stochastic Screen Space Ray Tracing
 //Written by MJ_Ehsan for Reshade
-//Version 0.4 - UI
+//Version 0.6 - UI
 
 //license
 //CC0 ^_^
 
 
 #if UI_DIFFICULTY == 1
+
 uniform int Hints<
 	ui_text = "This shader is in -ALPHA PHASE-, expect bugs.\n\n"
 			  "Set UI_DIFFICULTY to 0 to make the UI simpler if you want.\n"
 			  "Advanced categories are unnecessary options that\n"
-			  "can break the look of the shader if modified improperly.";
+			  "can break the look of the shader if modified improperly.\n\n"
+			  "Use with ReShade_MotionVectors. Increasing the quality of\n"
+			  "the motion vector shader obviously increases the precision\n"
+			  "thus making the quality of NiceGuy lighting higher. But if\n"
+			  "you have performance issues, don't hesitate to decrease its\n"
+			  "resolution and pre-block size. That doesn't hurt noticably.";
+			  //"Disabing NGL_HYBRID_MODE can give you better performance\n"
+			  //"But you can use only one effect (either GI or Reflection).\n"
+			  //"Don't forget to give me feedbacks in reshade discord";
 			  
 	ui_category = "Hints - Please Read for good results.";
 	ui_category_closed = true;
@@ -19,11 +28,18 @@ uniform int Hints<
 	ui_type = "radio";
 >;
 
-uniform bool GI <
-	ui_label = "GI Mode";
-	ui_tooltip = "When enabled, gives you Ambient Occlusion and Indirect Lighting.\n"
-				 "When disabled, gives you shiny or rough reflections.";
+#if !NGL_HYBRID_MODE
+uniform int GI <
+	ui_type = "combo";
+	ui_label = "Mode";
+	ui_items = "Reflection\0GI\0";
 > = 1;
+#endif
+
+uniform bool UseCatrom <
+	ui_label = "Use Catrom resampling";
+	ui_tooltip = "Uses Catrom resampling for Upscaling and  Reprojection. Slower but sharper.";
+> = 0;
 
 uniform float fov <
 	ui_label = "Field of View";
@@ -38,7 +54,7 @@ uniform float BUMP <
 	ui_label = "Bump mapping";
 	ui_type = "slider";
 	ui_category = "Ray Tracing";
-	ui_tooltip = "Adds tiny details to the reflection/GI.";
+	ui_tooltip = "Adds tiny details to the lighting.";
 	ui_min = 0.0;
 	ui_max = 1;
 > = 1;
@@ -47,9 +63,9 @@ uniform float roughness <
 	ui_label = "Roughness";
 	ui_type = "slider";
 	ui_category = "Ray Tracing";
-	ui_tooltip = "Blurriness of the reflections. Only works with GI mode disabled.";
+	ui_tooltip = "Blurriness of the reflections.";
 	ui_min = 0.0;
-	ui_max = 1.0;
+	ui_max = 0.999;
 > = 0.4;
 
 uniform bool TemporalRefine <
@@ -60,7 +76,6 @@ uniform bool TemporalRefine <
 				 "Then enable this option to have more accurate Reflection/GI.";
 	ui_category_closed = true;
 > = 0;
-//#define TemporalRefine false
 
 uniform float RAYINC <
 	ui_label = "Ray Increment";
@@ -91,7 +106,6 @@ uniform float RAYDEPTH <
 	ui_min = 0.05;
 	ui_max = 10;
 > = 2;
-//#define RAYDEPTH 10000
 
 uniform float STEPNOISE <
 	ui_label = "Step Length Jitter";
@@ -130,18 +144,13 @@ uniform float Sthreshold <
 	ui_category_closed = true;
 > = 0.015;
 
-//uniform bool HLFix <
-//	ui_label = "Fix Highlights";
-//	ui_category = "Blending Options";
-//	ui_tooltip = "Fixes bad blending in bright areas of background/reflections.";
-//> = 1;
 static const bool HLFix = 1;
 
 uniform float EXP <
 	ui_label = "Fresnel Exponent";
 	ui_type = "slider";
 	ui_category = "Blending Options";
-	ui_tooltip = "Blending intensity for shiny materials. Only works with GI mode disabled.";
+	ui_tooltip = "Blending intensity for shiny materials.";
 	ui_min = 1;
 	ui_max = 10;
 > = 4;
@@ -150,21 +159,21 @@ uniform float AO_Radius_Background <
 	ui_label = "Image AO";
 	ui_type = "slider";
 	ui_category = "Blending Options";
-	ui_tooltip = "Radius of the effective Ray Marched AO. Only works with GI mode enabled.";
+	ui_tooltip = "Radius of the effective Ray Marched AO.";
 > = 1;
 
 uniform float AO_Radius_Reflection <
 	ui_label = "GI AO";
 	ui_type = "slider";
 	ui_category = "Blending Options";
-	ui_tooltip = "Radius of the effective Ray Marched AO. Only works with GI mode enabled.";
+	ui_tooltip = "Radius of the effective Ray Marched AO.";
 > = 1;
 
 uniform float AO_Intensity <
 	ui_label = "AO Power";
 	ui_type = "slider";
 	ui_category = "Blending Options";
-	ui_tooltip = "Power of both layers of AO. Only works with GI mode enabled.";
+	ui_tooltip = "Ambient Occlusion falloff curve";
 > = 1;
 
 uniform float depthfade <
@@ -181,7 +190,7 @@ uniform bool LinearConvert <
 	ui_type = "radio";
 	ui_label = "sRGB to Linear";
 	ui_category = "Color Management";
-	ui_tooltip = "Converts from sRGB to Linear";
+	ui_tooltip = "Disable if the game is HDR";
 	ui_category_closed = true;
 > = 1;
 
@@ -206,7 +215,7 @@ uniform float2 SatExp <
 
 uniform uint debug <
 	ui_type = "combo";
-	ui_items = "None\0Reflections\0Depth\0Normal\0Accumulation\0";
+	ui_items = "None\0Lighting\0Depth\0Normal\0Accumulation\0";
 	ui_category = "Extra";
 	ui_category_closed = true;
 	ui_min = 0;
@@ -221,16 +230,9 @@ uniform float SkyDepth <
 	ui_category_closed = true;
 > = 0.99;
 
-/*uniform float TEMP_UIVAR <
-	ui_type = "slider";
-	ui_category = "Debug";
-	ui_min = 0;
-	ui_max = 1;
-> = 0.25;*/
-
 uniform int Credits<
 	ui_text = "Thanks Lord of Lunacy, Leftfarian, and other devs for helping me. <3\n"
-			  "Thanks Alea for testing.<3\n\n"
+			  "Thanks Alea and MassiHancer for testing.<3\n\n"
 
 			  "Credits:\n"
 			  "Thanks Crosire for ReShade.\n"
@@ -265,31 +267,52 @@ uniform int Credits<
 	ui_label = " ";
 	ui_type = "radio";
 >;
+
+uniform int Preprocessordefinitionstooltip<
+	ui_text = "HQ UPSCALING makes overall reflection quality as sharp as native res but is slower.\n\n"
+	
+			  "MAX_MipFilter : Higher values filter dissoclusions faster but are blurrier.\n\n"
+			  
+			  "RESOLUTION_SCALE_ : Lower values are much faster but may be a bit blurrier.\n\n"
+			  
+			  "SMOOTH_NORMALS : 0 is disabed, 1 is low quality and fast, 2 is high quality and a bit slow, 3 is Photography mode is really slow.\n\n"
+			  
+			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.\n\n"
+
+			  "NGL_HYBRID_MODE : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
+	ui_category = "Preprocessor definitions tooltip";
+	ui_category_closed = true;
+	ui_label = " ";
+	ui_type = "radio";
+>;
 #endif
 
 #if UI_DIFFICULTY == 0
 
 uniform int Hints<
 	ui_text = "This shader is in -ALPHA PHASE-, expect bugs.\n\n"
-			  "Set UI_DIFFICULTY to 1 if you want access to more settings.\n";
+			  "Set UI_DIFFICULTY to 1 if you want access to more settings.";
+			  
 	ui_category = "Hints - Please Read!";
 	ui_label = " ";
 	ui_type = "radio";
 >;
 
-uniform bool GI <
-	ui_label = "GI Mode";
-	ui_tooltip = "When enabled, gives you Ambient Occlusion and Indirect Lighting.\n"
-				 "When disabled, gives you shiny or rough reflections.";
-> = 1;
-
 static const float fov = 65;
+
+#if !NGL_HYBRID_MODE
+uniform int GI <
+	ui_type = "combo";
+	ui_label = "Mode";
+	ui_items = "Reflection\0GI\0";
+> = 1;
+#endif
 
 uniform float BUMP <
 	ui_label = "Bump mapping";
 	ui_type = "slider";
 	ui_category = "Ray Tracing";
-	ui_tooltip = "Adds tiny details to the reflection/GI.";
+	ui_tooltip = "Adds tiny details to the lighting.";
 	ui_min = 0.0;
 	ui_max = 1;
 > = 1;
@@ -298,41 +321,38 @@ uniform float roughness <
 	ui_label = "Roughness";
 	ui_type = "slider";
 	ui_category = "Ray Tracing";
-	ui_tooltip = "Blurriness of the reflections. Only works with GI mode disabled.";
+	ui_tooltip = "Blurriness of the reflections.";
 	ui_min = 0.0;
-	ui_max = 1.0;
+	ui_max = 0.999;
 > = 0.4;
 
 #define TemporalRefine 0
 #define RAYINC 2
 #define UI_RAYSTEPS 12
-//#define RAYDEPTH (1-GI)*2.5+GI*5
 #define RAYDEPTH 2
-//#define STEPNOISE (1-GI)*0.25*roughness+GI*0.25
-#define STEPNOISE 0.25
-#define Tthreshold 0.03
+#define STEPNOISE 0.15
+#define Tthreshold 0.025
 #define MAX_Frames 64
-#define Sthreshold 0.04
+#define Sthreshold 0.015
 #define HLFix  1
 
 uniform float EXP <
-	ui_label = "Reflection Intensity";
+	ui_label = "Reflection rim fade";
 	ui_type = "slider";
 	ui_category = "Blending Options";
-	ui_tooltip = "Only works with GI mode disabled.";
 	ui_min = 1;
 	ui_max = 10;
 > = 4;
 
 #define AO_Radius_Background 1
-#define AO_Radius_Reflection 1
+#define AO_Radius_Reflection 0.5
 
 uniform float AO_Intensity <
 	ui_label = "AO Power";
 	ui_type = "slider";
 	ui_category = "Blending Options";
-	ui_tooltip = "Only works with GI mode enabled.";
-> = 1;
+	ui_tooltip = "Ambient Occlusion falloff curve";
+> = 0.67;
 
 uniform float depthfade <
 	ui_label = "Depth Fade";
@@ -348,11 +368,11 @@ uniform bool LinearConvert <
 	ui_type = "radio";
 	ui_label = "sRGB to Linear";
 	ui_category = "Color Management";
-	ui_tooltip = "Converts from sRGB to Linear";
+	ui_tooltip = "Disable if the game is HDR";
 	ui_category_closed = true;
 > = 1;
 
-#define IT_Intensity 0.75
+#define IT_Intensity 0.8
 
 uniform float2 SatExp <
 	ui_type = "slider";
@@ -366,7 +386,7 @@ uniform float2 SatExp <
 
 uniform uint debug <
 	ui_type = "combo";
-	ui_items = "None\0Reflections\0Depth\0Normal\0Accumulation\0";
+	ui_items = "None\0Lighting\0Depth\0Normal\0Accumulation\0";
 	ui_category = "Extra";
 	ui_category_closed = true;
 	ui_min = 0;
@@ -377,7 +397,7 @@ uniform uint debug <
 
 uniform int Credits<
 	ui_text = "Thanks Lord of Lunacy, Leftfarian, and other devs for helping me. <3\n"
-			  "Thanks Alea for testing.<3\n\n"
+			  "Thanks Alea and MassiHancer for testing.<3\n\n"
 
 			  "Credits:\n"
 			  "Thanks Crosire for ReShade.\n"
@@ -408,6 +428,24 @@ uniform int Credits<
 			  "https://www.shadertoy.com/view/lldBRn";
 			  
 	ui_category = "Credits";
+	ui_category_closed = true;
+	ui_label = " ";
+	ui_type = "radio";
+>;
+
+uniform int Preprocessordefinitionstooltip<
+	ui_text = "HQ UPSCALING makes overall reflection quality as sharp as native res but is slower.\n\n"
+	
+			  "MAX_MipFilter : Higher values filter dissoclusions faster but are blurrier.\n\n"
+			  
+			  "RESOLUTION_SCALE_ : Lower values are much faster but may be a bit blurrier.\n\n"
+			  
+			  "SMOOTH_NORMALS : 0 is disabed, 1 is low quality and fast, 2 is high quality and a bit slow, 3 is Photography mode is really slow.\n\n"
+			  
+			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.\n\n"
+
+			  "NGL_HYBRID_MODE : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
+	ui_category = "Preprocessor definitions tooltip";
 	ui_category_closed = true;
 	ui_label = " ";
 	ui_type = "radio";
