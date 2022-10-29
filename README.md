@@ -2,7 +2,7 @@
 A collection of my ReShade shaders.
 
 1- NiceGuy Lighting can be used to either add GI/AO or Specular Reflections.
-You don't need ScatterFX for this one. It still requires DRME as it uses
+You don't need ScatterFX for this one. It still requires DRME (or ReShade_MotionVectors/qUINT_MotionVectors) as it uses
 temporal denoising. Still in Beta so expect major bugs. One known bug is
 dilating black patches on the GI (can be seen in Reflection debug mode).
 Select a PreProcessor Definition and press Enter to fix it. This bug happens
