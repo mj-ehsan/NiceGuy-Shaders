@@ -1,6 +1,6 @@
 //Stochastic Screen Space Ray Tracing
 //Written by MJ_Ehsan for Reshade
-//Version 0.6 - UI
+//Version 0.6.1 - UI
 
 //license
 //CC0 ^_^
@@ -200,8 +200,8 @@ uniform float IT_Intensity <
 	ui_category = "Color Management";
 	ui_tooltip = "intensity of Inverse Tonemapping.";
 	ui_category_closed = true;
-	ui_max = 0.9;
-> = 0.5;
+	ui_max = 0.95;
+> = 0.95;
 
 uniform float2 SatExp <
 	ui_type = "slider";
@@ -308,6 +308,11 @@ uniform int GI <
 > = 1;
 #endif
 
+uniform bool UseCatrom <
+	ui_label = "Use Catrom resampling";
+	ui_tooltip = "Uses Catrom resampling for Upscaling and  Reprojection. Slower but sharper.";
+> = 0;
+
 uniform float BUMP <
 	ui_label = "Bump mapping";
 	ui_type = "slider";
@@ -372,7 +377,7 @@ uniform bool LinearConvert <
 	ui_category_closed = true;
 > = 1;
 
-#define IT_Intensity 0.8
+#define IT_Intensity 0.95
 
 uniform float2 SatExp <
 	ui_type = "slider";
