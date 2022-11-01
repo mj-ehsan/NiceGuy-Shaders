@@ -1,6 +1,6 @@
 //Stochastic Screen Space Ray Tracing
 //Written by MJ_Ehsan for Reshade
-//Version 0.6
+//Version 0.6.1
 
 //license
 //CC0 ^_^
@@ -110,7 +110,7 @@ uniform float Frame < source = "framecount"; >;
 //HistoryFix0 should be lower or equal to HistoryFix1 in order to avoid artifacts.
 #define HistoryFix0 0 //Big one  . Default is 1
 #define HistoryFix1 0 //Small one. Default is 1
-#define MAX_MipFilter 0 //additional mip based blur (radius = 2^MAX_MipFilters). Default is 3
+#define ngMAX_MipFilter 0 //additional mip based blur (radius = 2^ngMAX_MipFilters). Default is 3
 
 //Motion Based Deghosting Threshold is the minimum value to be multiplied to the history length.
 //Higher value causes more ghosting but less blur. Too low values might result in strong flickering in motion.
@@ -162,16 +162,16 @@ sampler sSSSR_HitDistTex { Texture = SSSR_HitDistTex; };
 texture SSSR_POGColTex  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
 sampler sSSSR_POGColTex { Texture = SSSR_POGColTex; };
 
-texture SSSR_FilterTex0  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex0  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex0 { Texture = SSSR_FilterTex0; };
 
-texture SSSR_FilterTex1  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex1  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex1 { Texture = SSSR_FilterTex1; };
 
-texture SSSR_FilterTex2  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex2  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex2 { Texture = SSSR_FilterTex2; };
 
-texture SSSR_FilterTex3  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex3  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex3 { Texture = SSSR_FilterTex3; };
 
 texture SSSR_PNormalTex  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
@@ -197,16 +197,16 @@ sampler sSSSR_MaskTex { Texture = SSSR_MaskTex; };
 texture SSSR_ReflectionTexD  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
 sampler sSSSR_ReflectionTexD { Texture = SSSR_ReflectionTexD; };
 
-texture SSSR_FilterTex0D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex0D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex0D { Texture = SSSR_FilterTex0D; };
 
-texture SSSR_FilterTex1D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex1D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex1D { Texture = SSSR_FilterTex1D; };
 
-texture SSSR_FilterTex2D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex2D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex2D { Texture = SSSR_FilterTex2D; };
 
-texture SSSR_FilterTex3D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = MAX_MipFilter; };
+texture SSSR_FilterTex3D  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = ngMAX_MipFilter; };
 sampler sSSSR_FilterTex3D { Texture = SSSR_FilterTex3D; };
 
 #endif //NGL_HYBRID_MODE
@@ -673,7 +673,7 @@ void SpatialFilter0( in float4 vpos : SV_Position, in float2 texcoord : TexCoord
 		if(HLOut < HistoryFix1 && MAX_Frames > HistoryFix1) ST = saturate(ST*20);
 	
 		radius = GI?1:saturate(Roughness*8/HLOut)*saturate((HitDist*5)/RESHADE_DEPTH_LINEARIZATION_FAR_PLANE);
-		lod = min(MAX_MipFilter, max(0, (MAX_MipFilter)-HLOut))*radius;
+		lod = min(ngMAX_MipFilter, max(0, (ngMAX_MipFilter)-HLOut))*radius;
 		//lod = 0;
 		
 #if HQ_UPSCALING
@@ -732,7 +732,7 @@ void SpatialFilter1(
 	radius = GI?1:saturate(max(Roughness, 0.1)*8/HLOut)*saturate((HitDist*5)/RESHADE_DEPTH_LINEARIZATION_FAR_PLANE);
 	//radius = max(radius, 0.2);
 	if(HLOut>Off) radius *= (MAX_Frames-HLOut)/MAX_Frames;
-	lod = min(MAX_MipFilter, max(0, (MAX_MipFilter)-HLOut))*radius;
+	lod = min(ngMAX_MipFilter, max(0, (ngMAX_MipFilter)-HLOut))*radius;
 	//lod = 0;
 #if HQ_UPSCALING
 	p *= radius*pow(2, (lod))*((HLOut<VeryLarge||HLOut>=Medium)?1.5:1)*rcp(RESOLUTION_SCALE_);
