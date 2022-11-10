@@ -85,26 +85,19 @@ uniform int Hints<
 
 float4 Atrous(inout float4 color, in float2 texcoord, in float Radius)
 {
-	/*float4 s;*/ float2 t, p; float DG, Depth, Determinator;
+	float2 t, p; float DG, Depth, Determinator;
 	
 	Depth = LDepth(texcoord);
 	Determinator = Depth-0.1;
 	p = pix; p *= Radius*Depth*8;
 	
-	[unroll]
-	for(int x = -1; x <= 1; x++)
-	{
-		[unroll]
-		for(int y = -1; y <= 1; y++)
-		{
+	[unroll]for(int x = -1; x <= 1; x++){
+	[unroll]for(int y = -1; y <= 1; y++){
 			t = texcoord + float2(x,y)*p;
 			DG = LDepth(t);
 			if(DG > Determinator)
-			{
 				color += float4(tex2D(ReShade::BackBuffer, t).rgb, 1);
-			}
-		}
-	}
+	}}
 	return color;
 }
 
