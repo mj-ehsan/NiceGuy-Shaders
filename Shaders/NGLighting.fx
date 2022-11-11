@@ -112,14 +112,20 @@ technique NGLighting<
 		VertexShader  = PostProcessVS;
 		PixelShader   = TemporalFilter0;
 		RenderTarget0 = SSSR_MaskTex;
-		RenderTarget1 = SSSR_FilterTex0;
+		//RenderTarget1 = SSSR_FilterTex0;
 	}
 	pass
 	{
 		VertexShader  = PostProcessVS;
 		PixelShader   = TemporalFilter1;
-		RenderTarget0 = SSSR_FilterTex1;
+		RenderTarget0 = SSSR_FilterTex0;
 		RenderTarget1 = SSSR_HLTex0;
+	}
+	pass
+	{
+		VertexShader  = PostProcessVS;
+		PixelShader   = SpatialFilter2;
+		RenderTarget0 = SSSR_FilterTex1;
 	}
 	pass
 	{
