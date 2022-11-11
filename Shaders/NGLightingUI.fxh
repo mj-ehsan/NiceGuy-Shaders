@@ -1,6 +1,6 @@
 //Stochastic Screen Space Ray Tracing
 //Written by MJ_Ehsan for Reshade
-//Version 0.6.1 - UI
+//Version 0.7 - UI
 
 //license
 //CC0 ^_^
@@ -123,7 +123,7 @@ uniform float Tthreshold <
 	ui_category = "Denoiser (Advanced)";
 	ui_tooltip = "Reduces noise but produces more ghosting.";
 	ui_category_closed = true;
-> = 0.025;
+> = 0.010;
 
 uniform int MAX_Frames <
 	ui_label = "History Length";
@@ -142,7 +142,7 @@ uniform float Sthreshold <
 	ui_category = "Denoiser (Advanced)";
 	ui_tooltip = "Reduces noise at the cost of detail.";
 	ui_category_closed = true;
-> = 0.015;
+> = 0.025;
 
 static const bool HLFix = 1;
 
@@ -270,16 +270,13 @@ uniform int Credits<
 
 uniform int Preprocessordefinitionstooltip<
 	ui_text = "HQ UPSCALING makes overall reflection quality as sharp as native res but is slower.\n\n"
-	
-			  "MAX_MipFilter : Higher values filter dissoclusions faster but are blurrier.\n\n"
 			  
 			  "RESOLUTION_SCALE_ : Lower values are much faster but may be a bit blurrier.\n\n"
 			  
 			  "SMOOTH_NORMALS : 0 is disabed, 1 is low quality and fast, 2 is high quality and a bit slow, 3 is Photography mode is really slow.\n\n"
 			  
-			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.\n\n"
-
-			  "NGL_HYBRID_MODE : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
+			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.";
+			  
 	ui_category = "Preprocessor definitions tooltip";
 	ui_category_closed = true;
 	ui_label = " ";
@@ -336,9 +333,9 @@ uniform float roughness <
 #define UI_RAYSTEPS 12
 #define RAYDEPTH 2
 #define STEPNOISE 0.15
-#define Tthreshold 0.025
+#define Tthreshold 0.01
 #define MAX_Frames 64
-#define Sthreshold 0.015
+#define Sthreshold 0.025
 #define HLFix  1
 
 uniform float EXP <
@@ -440,16 +437,12 @@ uniform int Credits<
 
 uniform int Preprocessordefinitionstooltip<
 	ui_text = "HQ UPSCALING makes overall reflection quality as sharp as native res but is slower.\n\n"
-	
-			  "MAX_MipFilter : Higher values filter dissoclusions faster but are blurrier.\n\n"
 			  
 			  "RESOLUTION_SCALE_ : Lower values are much faster but may be a bit blurrier.\n\n"
 			  
 			  "SMOOTH_NORMALS : 0 is disabed, 1 is low quality and fast, 2 is high quality and a bit slow, 3 is Photography mode is really slow.\n\n"
 			  
-			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.\n\n"
-
-			  "NGL_HYBRID_MODE : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
+			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.";
 	ui_category = "Preprocessor definitions tooltip";
 	ui_category_closed = true;
 	ui_label = " ";
