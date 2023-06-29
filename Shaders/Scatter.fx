@@ -770,7 +770,7 @@ technique Scatter1
 }
 
 technique Scatter
-< ui_label = "Scatter Buttom";
+< ui_label = "Scatter Bottom";
   ui_tooltip = "                             Scatter FX                             \n"
   			 "                          ||By Ehsan2077||                          \n"
 			   "||This shader is intended to be used with qUINT_SSR and or DH_RTGI||\n"
