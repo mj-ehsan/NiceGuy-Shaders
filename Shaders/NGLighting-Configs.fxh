@@ -4,6 +4,10 @@
  #define UI_DIFFICULTY 0
 #endif
 
+#ifndef USE_LAUNCHPAD
+ #define USE_LAUNCHPAD 0
+#endif
+
 #ifndef SMOOTH_NORMALS
  #define SMOOTH_NORMALS 1
 #endif
@@ -38,19 +42,26 @@
 //Smooth Normals configs. It uses a separable bilateral blur which uses only normals as determinator. 
 #define SNThreshold 2.5 //Bilateral Blur Threshold for Smooth normals passes. default is 0.5
 #define SNDepthW FAR_PLANE*1*SNThreshold //depth weight as a determinator. default is 100/SNThreshold
-#if SMOOTH_NORMALS <= 1 //13*13 8taps
- #define LODD 0.5    //Don't touch this for God's sake
- #define SNWidth 5.5 //Blur pixel offset for Smooth Normals
- #define SNSamples 1 //actually SNSamples*4+4!
-#elif SMOOTH_NORMALS == 2 //16*16 16taps
- #define LODD 0.5
- #define SNWidth 2.5
- #define SNSamples 3
-#elif SMOOTH_NORMALS > 2 //41*41 84taps
- #warning "SMOOTH_NORMALS 3 is slow and should to be used for photography or old games. Otherwise set to 2 or 1."
- #define LODD 0
- #define SNWidth 1
- #define SNSamples 30
+#define ENABLE_SMOOTH_NORMALS SMOOTH_NORMALS > 0 && !USE_LAUNCHPAD
+#if ENABLE_SMOOTH_NORMALS
+    #if SMOOTH_NORMALS <= 1 //13*13 8taps
+        #define LODD 0.5    //Don't touch this for God's sake
+        #define SNWidth 5.5 //Blur pixel offset for Smooth Normals
+        #define SNSamples 1 //actually SNSamples*4+4!
+    #elif SMOOTH_NORMALS == 2 //16*16 16taps
+        #define LODD 0.5
+        #define SNWidth 2.5
+        #define SNSamples 3
+    #elif SMOOTH_NORMALS > 2 //41*41 84taps
+        #warning "SMOOTH_NORMALS 3 is slow and should to be used for photography or old games. Otherwise set to 2 or 1."
+        #define LODD 0
+        #define SNWidth 1
+        #define SNSamples 30
+    #endif
+#else
+    #define LODD 0.5    //Don't touch this for God's sake
+    #define SNWidth 5.5 //Blur pixel offset for Smooth Normals
+    #define SNSamples 1 //actually SNSamples*4+4!
 #endif
 
 #define STEPNOISE 1

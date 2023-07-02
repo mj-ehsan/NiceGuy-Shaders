@@ -83,8 +83,17 @@ sampler sTexColor {Texture = TexColor; SRGBTexture = false;};
 texture TexDepth : DEPTH;
 sampler sTexDepth {Texture = TexDepth;};
 
+#if USE_LAUNCHPAD
+namespace Deferred 
+{
+	texture MotionVectorsTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
+	texture NormalsTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG8; };
+}
+sampler SamplerMotionVectors { Texture = Deferred::MotionVectorsTex; AddressU = Clamp; AddressV = Clamp; MipFilter = Point; MinFilter = Point; MagFilter = Point; };
+#else
 texture texMotionVectors { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
 sampler SamplerMotionVectors { Texture = texMotionVectors; AddressU = Clamp; AddressV = Clamp; MipFilter = Point; MinFilter = Point; MagFilter = Point; };
+#endif
 
 texture SSSR_ReflectionTex  { Width = BUFFER_WIDTH*RESOLUTION_SCALE_; Height = BUFFER_HEIGHT*RESOLUTION_SCALE_; Format = RGBA16f; };
 sampler sSSSR_ReflectionTex { Texture = SSSR_ReflectionTex; };
@@ -113,9 +122,13 @@ sampler sSSSR_PNormalTex { Texture = SSSR_PNormalTex; };
 texture SSSR_NormTex  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
 sampler sSSSR_NormTex { Texture = SSSR_NormTex; };
 
-#if SMOOTH_NORMALS > 0
+#if USE_LAUNCHPAD
+sampler sLaunchpadNormTex { Texture = Deferred::NormalsTex; AddressU = Clamp; AddressV = Clamp; };
+#endif
+
+#if ENABLE_SMOOTH_NORMALS
 texture SSSR_NormTex1  { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; };
-sampler sSSSR_NormTex1 { Texture = SSSR_NormTex1; };
+sampler sSSSR_NormTex1 { Texture = SSSR_NormTex1; AddressU = Clamp; AddressV = Clamp; };
 #endif
 
 #if __RENDERER__ >= 0xa000 // If DX10 or higher
@@ -311,6 +324,16 @@ float2 PostoUV(float3 position)
 	scrnpos /= position.z;
 	
 	return scrnpos/2 + 0.5;
+}
+
+float3 octahedral_dec(float2 o) 
+{
+    o = o * 2.0 - 1.0;
+    float3 v = float3(o.xy, 1.0 - abs(o.x) - abs(o.y));
+    //v.xy = v.z < 0 ? (1.0 - abs(v.yx)) * fast_sign(v.xy) : v.xy;
+    float t = saturate(-v.z);
+    v.xy += v.xy >= 0.0.xx ? -t.xx : t.xx;
+    return normalize(v);
 }
 	
 float3 Normal(float2 texcoord)
@@ -547,9 +570,14 @@ void GBuffer1
 	out float4 normal : SV_Target0,
 	out float roughness : SV_Target1) //SSSR_NormTex
 {
+#if USE_LAUNCHPAD
+	float2 encodedNormals = tex2Dfetch(sLaunchpadNormTex, uint2(vpos.xy)).xy;
+	normal.rgb = octahedral_dec(encodedNormals);
+#else
 	normal.rgb = Normal(texcoord.xy);
+#endif
 	normal.a   = LDepth(texcoord.xy);
-#if SMOOTH_NORMALS <= 0
+#if !ENABLE_SMOOTH_NORMALS
 	normal.rgb = blend_normals( Bump(texcoord, BUMP), normal.rgb);
 #endif
 	roughness = GetRoughTex(texcoord, normal).r;
@@ -577,7 +605,7 @@ float4 SNH(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 	return s1.rgba/sc;
 }
 
-#if SMOOTH_NORMALS > 0 //For the sake of compiler error due to removing the sampler for SMOOTH_NORMALS 0
+#if ENABLE_SMOOTH_NORMALS //For the sake of compiler error due to removing the sampler for SMOOTH_NORMALS 0
 float4 SNV(float4 vpos : SV_Position, float2 texcoord : TexCoord) : SV_Target
 {
 	float4 color = tex2Dlod(sSSSR_NormTex1, float4(texcoord, 0, 0));

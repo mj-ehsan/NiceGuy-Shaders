@@ -26,7 +26,7 @@ technique NGLighting<
 		RenderTarget0 = SSSR_NormTex;
 		RenderTarget1 = SSSR_RoughTex;
 	}
-#if SMOOTH_NORMALS > 0
+#if ENABLE_SMOOTH_NORMALS
 	pass SmoothNormalHpass
 	{
 		VertexShader = PostProcessVS;
@@ -39,7 +39,7 @@ technique NGLighting<
 		PixelShader = SNV;
 		RenderTarget = SSSR_NormTex;
 	}
-#endif //SMOOTH_NORMALS
+#endif //ENABLE_SMOOTH_NORMALS
 #if __RENDERER__ >= 0xa000 // If DX10 or higher
 	pass LowResGBuffer
 	{
