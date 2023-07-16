@@ -4,8 +4,16 @@
 
 //license
 //CC0 ^_^
-
-
+/*
+uniform float temp_var0 <
+	ui_type = "slider";
+	ui_max  = 128;
+> = 0;
+uniform float temp_var1 <
+	ui_type = "slider";
+	ui_max  = 128;
+> = 0;
+*/
 #if UI_DIFFICULTY == 1
 
 uniform int Hints<
@@ -13,7 +21,7 @@ uniform int Hints<
 			  "Set UI_DIFFICULTY to 0 to make the UI simpler if you want.\n"
 			  "Advanced categories are unnecessary options that\n"
 			  "can break the look of the shader if modified improperly.\n\n"
-			  "Use with ReShade_MotionVectors at Quarter Resolution.\n"
+			  "Use with ReShade_MotionVectors at Half Resolution.\n"
 			  "Using higher resolutions for the motion vector only makes it WORSE "
 			  "when the game is using temporal filters (TAA,DLSS2,FSR2,TAAU,TSR,etc.)";
 			  //"Disabing NGL_HYBRID_MODE can give you better performance\n"
@@ -34,14 +42,13 @@ uniform int GI <
 > = 1;
 #endif
 
-uniform bool UseCatrom <
-	ui_label = "Use Catrom resampling";
-	ui_tooltip = "Uses Catrom resampling for Upscaling and  Reprojection. Slower but sharper.";
-> = 0;
+#define UseCatrom 0
+#define SharpenGI 0
 
-uniform bool SharpenGI <
-	ui_label = "Sharpen the GI";
-	ui_tooltip = "(No performance impact) Further improves the edge clarity. Try Catrom resampling first tho.";
+uniform bool UI_ExcludeSky<
+	ui_label = "Exclude Sky";
+	ui_category = "Ray Tracing";
+	ui_tooltip = "Excludes the sky from the GI/Reflection.";
 > = 1;
 
 uniform float fov <
@@ -59,8 +66,8 @@ uniform float BUMP <
 	ui_category = "Ray Tracing";
 	ui_tooltip = "Adds tiny details to the lighting.";
 	ui_min = 0.0;
-	ui_max = 1;
-> = 1;
+	ui_max = 5.0;
+> = 0.0;
 
 uniform float roughness <
 	ui_label = "Roughness";
@@ -70,15 +77,6 @@ uniform float roughness <
 	ui_min = 0.0;
 	ui_max = 0.999;
 > = 0.4;
-
-uniform bool TemporalRefine <
-	ui_label = "Temporal Refining (EXPERIMENTAL)";
-	ui_category = "Ray Tracing (Advanced)";
-	ui_tooltip = "EXPERIMENTAL! Expect issues\n"
-				 "Reduce (Surface depth) and increase (Step Length Jitter)\n"
-				 "Then enable this option to have more accurate Reflection/GI.";
-	ui_category_closed = true;
-> = 0;
 
 uniform float RAYINC <
 	ui_label = "Ray Increment";
@@ -109,18 +107,6 @@ uniform float RAYDEPTH <
 	ui_min = 0.05;
 	ui_max = 10;
 > = 2;
-
-uniform float MVErrorTolerance <
-	ui_label = "Motion Vector\nError Tolerance";
-	ui_type = "slider";
-	ui_category = "Denoiser (Advanced)";
-	ui_tooltip = "Lower values are  more sensitive to\n"
-				 "Motion Estimation errors. Thus relying\n"
-				 "more on spatial filtering rather than\n"
-				 "temporal accumulation";
-	ui_category_closed = true;
-	ui_step = 0.01;
-> = 0.95;
 
 uniform int MAX_Frames <
 	ui_label = "History Length";
@@ -153,25 +139,18 @@ uniform float EXP <
 	ui_max = 10;
 > = 4;
 
-uniform float AO_Radius_Background <
+uniform float AO_Intensity_Background <
 	ui_label = "Image AO";
 	ui_type = "slider";
 	ui_category = "Blending Options";
 	ui_tooltip = "Radius of AO for the image.";
 > = 1;
 
-uniform float AO_Radius_Reflection <
+uniform float AO_Intensity_Reflection <
 	ui_label = "GI AO";
 	ui_type = "slider";
 	ui_category = "Blending Options";
 	ui_tooltip = "Radius of AO for the GI.";
-> = 1;
-
-uniform float AO_Intensity <
-	ui_label = "AO Power";
-	ui_type = "slider";
-	ui_category = "Blending Options";
-	ui_tooltip = "AO falloff curve";
 > = 1;
 
 uniform float depthfade <
@@ -206,11 +185,11 @@ uniform float2 SatExp <
 
 uniform uint debug <
 	ui_type = "combo";
-	ui_items = "None\0Lighting\0Depth\0Normal\0Accumulation\0Roughness Map\0";
+	ui_items = "None\0Lighting\0Depth\0Normal\0Accumulation\0Roughness Map\0Variance\0";
 	ui_category = "Extra";
 	ui_category_closed = true;
 	ui_min = 0;
-	ui_max = 5;
+	ui_max = 6;
 > = 0;
 
 uniform float SkyDepth <
@@ -260,21 +239,18 @@ uniform int Credits<
 >;
 
 uniform int Preprocessordefinitionstooltip<
-	ui_text = "RESOLUTION_SCALE_ : Lower values are much faster but may be a bit blurrier.\n\n"
+	ui_text = "NGL_RESOLUTION_SCALE : Lower values are much faster but may be a bit blurrier.\n\n"
 			  
-			  "SMOOTH_NORMALS : 0 is disabed, 1 is low quality and fast, 2 is high quality and a bit slow, 3 is Photography mode is really slow.\n\n"
-			  
-			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.";//\n\n"
+			  "NGL_UI_DIFFICULTY    : 0 is EZ, 1 is for ReShade shamans."//\n\n"
 
-			  //"NGL_HYBRID_MODE : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
+			  "NGL_HYBRID_MODE      : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
 	ui_category = "Preprocessor definitions tooltip";
 	ui_category_closed = true;
 	ui_label = " ";
 	ui_type = "radio";
 >;
-#endif
 
-#if UI_DIFFICULTY == 0
+#else
 
 uniform int Hints<
 	ui_text = "This shader is in -ALPHA PHASE-, expect major changes.\n\n"
@@ -303,14 +279,20 @@ uniform int UI_QUALITY_PRESET <
 	ui_items = "Low (16)\0Medium (64)\0High (160)\0Very High (320)\0Extreme (500)\0";
 > = 1;
 
+uniform bool UI_ExcludeSky<
+	ui_label = "Exclude Sky";
+	ui_category = "Ray Tracing";
+	ui_tooltip = "Excludes the sky from the GI/Reflection.";
+> = 1;
+
 uniform float BUMP <
 	ui_label = "Bump mapping";
 	ui_type = "slider";
 	ui_category = "Ray Tracing";
 	ui_tooltip = "Adds tiny details to the lighting.";
 	ui_min = 0.0;
-	ui_max = 1;
-> = 0.5;
+	ui_max = 5.0;
+> = 0.0;
 
 uniform float roughness <
 	ui_label = "Roughness";
@@ -335,6 +317,9 @@ uniform float AO_Intensity <
 	ui_category = "Blending Options";
 	ui_tooltip = "Ambient Occlusion falloff curve";
 > = 0.67;
+
+#define AO_Intensity_Background AO_Intensity
+#define AO_Intensity_Reflection AO_Intensity/2
 
 uniform float depthfade <
 	ui_label = "Depth Fade";
@@ -412,13 +397,11 @@ uniform int Credits<
 >;
 
 uniform int Preprocessordefinitionstooltip<
-	ui_text = "RESOLUTION_SCALE_ : Lower values are much faster but may be a bit blurrier.\n\n"
+	ui_text = "NGL_RESOLUTION_SCALE : Lower values are much faster but may be a bit blurrier.\n\n"
 			  
-			  "SMOOTH_NORMALS : 0 is disabed, 1 is low quality and fast, 2 is high quality and a bit slow, 3 is Photography mode is really slow.\n\n"
-			  
-			  "UI_DIFFICULTY : 0 is EZ, 1 is for ReShade shamans.";//\n\n"
+			  "NGL_UI_DIFFICULTY    : 0 is EZ, 1 is for ReShade shamans."//\n\n"
 
-			  //"NGL_HYBRID_MODE : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
+			  "NGL_HYBRID_MODE      : 0 means you can use only one effect at a time. Either GI or Reflection. 1 means you have both effects simultaniously but it's a slower (less than 2 times)";
 	ui_category = "Preprocessor definitions tooltip";
 	ui_category_closed = true;
 	ui_label = " ";
