@@ -13,7 +13,7 @@
 
 technique NGLighting<
 	ui_label = "NiceGuy Lighting (GI/Reflection)";
-	ui_tooltip = "            NiceGuy Lighting 0.9.2 beta            \n"
+	ui_tooltip = "            NiceGuy Lighting 0.9.3 beta            \n"
 				 "                  ||By Ehsan2077||                 \n"
 				 "|Use with ReShade_MotionVectors at quarter detail.|\n"
 				 "|And    don't   forget    to   read   the   hints.|";
