@@ -90,9 +90,9 @@ uniform float IntensityPow <
 	ui_step = 0.01;
 	ui_type = "slider";
 	ui_label = "Intensity Pow";
-	ui_tooltip = "Pow multiplier for fog depth.\n"
-				  "Increasing this will decrease the intensity of the fog at lower depth,\n"
-				  "useful to prevent clarity of closer elements from diminishing.";
+	ui_tooltip = "Pow multiplier for fog depth\n"
+				  "Increasing this will decrease the intensity of the fog at lower depth\n"
+				  "Useful to prevent clarity of closer elements from diminishing.";
 	ui_category = "Blending";
 > = 1;
 
