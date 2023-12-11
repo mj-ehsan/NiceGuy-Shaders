@@ -84,6 +84,18 @@ uniform float MaxIntensity <
 	ui_category = "Blending";
 > = 0.8;
 
+uniform float IntensityPow <
+	ui_max = 6;
+	ui_min = 0;
+	ui_step = 0.01;
+	ui_type = "slider";
+	ui_label = "Intensity Pow";
+	ui_tooltip = "Pow multiplier for fog depth.\n"
+				  "Increasing this will decrease the intensity of the fog at lower depth,\n"
+				  "useful to prevent clarity of closer elements from diminishing.";
+	ui_category = "Blending";
+> = 1;
+
 uniform float Exposure <
 	ui_type = "slider";
 	ui_max = 2;
@@ -220,7 +232,7 @@ float3 Blend( float4 Postion : SV_Position, float2 texcoord : TEXCOORD0) : SV_Ta
 	
 	float3 back= tex2D(sTexColor, texcoord).rgb;
 	
-	float coeff = min( depth * Intensity, MaxIntensity);
+	float coeff = min( pow(depth, IntensityPow) * Intensity, MaxIntensity);
 	
 	return lerp( back, fog.rgb, coeff);
 }
