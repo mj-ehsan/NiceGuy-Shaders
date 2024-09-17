@@ -68,6 +68,9 @@ uniform float Timer < source = "timer"; >;
  #define MaxAccumulatedFrameNum 15
 #endif
 
+#ifndef USE_LAUNCHPAD_MOTIONS 
+ #define USE_LAUNCHPAD_MOTIONS 0
+#endif
 ///////////////Include/////////////////////
 ///////////////Textures-Samplers///////////
 
@@ -101,6 +104,19 @@ sampler sTSTex1 {Texture = TSTex1; };
 texture2D TATex2 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 4; };
 sampler sTATex2 {Texture = TATex2; };
 
+#if USE_LAUNCHPAD_MOTIONS==0
+
+texture MotVectTexVort     { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
+sampler sMotVectTexVort { Texture = MotVectTexVort; };
+float2 sampleMotion(float2 texcoord){return tex2D(sMotVectTexVort, texcoord).rg;}
+#else
+namespace Deferred
+{
+	texture MotionVectorsTex        { Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RG16F;     };
+	sampler sMotionVectorsTex       { Texture = MotionVectorsTex; };
+}
+float2 sampleMotion(float2 texcoord){return tex2D(Deferred::sMotionVectorsTex, texcoord).rg;}
+#endif
 ///////////////Textures-Samplers///////////
 ///////////////UI//////////////////////////
 
