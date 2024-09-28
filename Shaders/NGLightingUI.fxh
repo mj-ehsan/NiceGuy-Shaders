@@ -12,8 +12,11 @@ uniform int Hints<
 	ui_text = "Set UI_DIFFICULTY to 0 to make the UI simpler if you want.\n"
 			  "Advanced categories are unnecessary options that\n"
 			  "can break the look of the shader if modified improperly.\n\n"
-			  "Use with ReShade_MotionVectors at Quarter Resolution.\n"
-			  "Using higher resolutions for the motion vector only makes it WORSE "
+			  "Use with a motion estimation shader applied before this shader.\n"
+			  "Using higher resolutions for the motion vector only makes it WORSE"
+"to use with DRME OR quint_motionvectors or reshade_motionvectors, set preprocessor definition MV_METHOD = 2"
+		"to use with immerse launchpad motions, set preprocessor definition MV_METHOD = 1"
+		"to use with vort_motions set preprocessor definition MV_METHOD = 0"
 			  "when the game is using temporal filters (TAA,DLSS2,FSR2,TAAU,TSR,etc.)";
 			  
 	ui_category = "Hints - Please Read for good results.";

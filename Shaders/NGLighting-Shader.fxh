@@ -66,6 +66,10 @@ static const float2 pix = float2(BUFFER_RCP_WIDTH, BUFFER_RCP_HEIGHT);
 
 #define FAR_PLANE RESHADE_DEPTH_LINEARIZATION_FAR_PLANE 
 
+#ifndef MV_METHOD 
+ #define MV_METHOD  0
+#endif
+
 #define PI 3.1415927
 static const float PI2div360 = 0.01745329;
 #define rad(x) (x * PI2div360)
@@ -83,8 +87,30 @@ sampler sTexColor {Texture = TexColor; SRGBTexture = false;};
 texture TexDepth : DEPTH;
 sampler sTexDepth {Texture = TexDepth;};
 
-texture texMotionVectors { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
-sampler SamplerMotionVectors { Texture = texMotionVectors; AddressU = Clamp; AddressV = Clamp; MipFilter = Point; MinFilter = Point; MagFilter = Point; };
+#if MV_METHOD==0
+
+texture MotVectTexVort     { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
+sampler sMotVectTexVort { Texture = MotVectTexVort; };
+float2 sampleMotion(float2 texcoord){return tex2D(sMotVectTexVort, texcoord).rg;}
+#endif
+
+#if MV_METHOD==1
+namespace Deferred
+{
+	texture MotionVectorsTex        { Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RG16F;     };
+	sampler sMotionVectorsTex       { Texture = MotionVectorsTex; };
+}
+float2 sampleMotion(float2 texcoord){return tex2D(Deferred::sMotionVectorsTex, texcoord).rg;}
+#endif 
+
+#if MV_METHOD==2
+
+texture texMotionVectors     { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
+sampler SamplerMotionVectors { Texture = texMotionVectors; };
+float2 sampleMotion(float2 texcoord){return tex2D(SamplerMotionVectors, texcoord).rg;}
+
+
+#endif
 
 texture SSSR_ReflectionTex  { Width = BUFFER_WIDTH*RESOLUTION_SCALE_; Height = BUFFER_HEIGHT*RESOLUTION_SCALE_; Format = RGBA16f; MipLevels = 4; };
 sampler sSSSR_ReflectionTex { Texture = SSSR_ReflectionTex; };
@@ -213,11 +239,6 @@ float2 GetPixelSizeWithMip(in float mip)
 	float2 MinResRcp = max(ColorSize, DepthSize);
 	
 	return MinResRcp;
-}
-
-float2 sampleMotion(float2 texcoord)
-{
-    return tex2D(SamplerMotionVectors, texcoord).rg;
 }
 
 float checker(float4 vpos)
