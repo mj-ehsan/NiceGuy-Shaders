@@ -52,9 +52,9 @@
 
 #include "ReShadeUI.fxh"
 #include "ReShade.fxh"
-#if exists("MotionVectors.fxh")
- #include "MotionVectors.fxh"
-#endif
+
+
+
 
 uniform float Timer < source = "timer"; >;
 
@@ -68,6 +68,9 @@ uniform float Timer < source = "timer"; >;
  #define MaxAccumulatedFrameNum 15
 #endif
 
+#ifndef MV_METHOD 
+ #define MV_METHOD  0
+#endif
 ///////////////Include/////////////////////
 ///////////////Textures-Samplers///////////
 
@@ -101,6 +104,30 @@ sampler sTSTex1 {Texture = TSTex1; };
 texture2D TATex2 { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA16f; MipLevels = 4; };
 sampler sTATex2 {Texture = TATex2; };
 
+#if MV_METHOD==0
+
+texture MotVectTexVort     { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
+sampler sMotVectTexVort { Texture = MotVectTexVort; };
+float2 sampleMotion(float2 texcoord){return tex2D(sMotVectTexVort, texcoord).rg;}
+#endif
+
+#if MV_METHOD==1
+namespace Deferred
+{
+	texture MotionVectorsTex        { Width = BUFFER_WIDTH;   Height = BUFFER_HEIGHT;   Format = RG16F;     };
+	sampler sMotionVectorsTex       { Texture = MotionVectorsTex; };
+}
+float2 sampleMotion(float2 texcoord){return tex2D(Deferred::sMotionVectorsTex, texcoord).rg;}
+#endif 
+
+#if MV_METHOD==2
+
+texture texMotionVectors     { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RG16F; };
+sampler SamplerMotionVectors { Texture = texMotionVectors;  };
+float2 sampleMotion(float2 texcoord){return tex2D(SamplerMotionVectors, texcoord).rg;}
+
+
+#endif
 ///////////////Textures-Samplers///////////
 ///////////////UI//////////////////////////
 
@@ -130,7 +157,10 @@ uniform int Hints<
 		"Download DRME : https://github.com/JakobPCoder/ReshadeMotionEstimation\n"
 		"Thanks JakobPCoder\n"
 		"Recommended settings for DRME\n"
-		"Motion Estimation Detail : Quarter\n";
+		"Motion Estimation Detail : Quarter\n"
+		"to use with DRME OR quint_motionvectors or reshade_motionvectors, set preprocessor definition MV_METHOD = 2"
+		"to use with immerse launchpad motions, set preprocessor definition MV_METHOD = 1"
+		"to use with vort_motions set preprocessor definition MV_METHOD = 0";
 		
 	ui_category = "Hints - Please Read for good results";
 	ui_category_closed = true;
@@ -203,7 +233,7 @@ uniform float color_threshold1 <
 	ui_category_closed = true;
 	ui_min = 0;
 	ui_max = 1;
-> = 0.4;
+> = 0.0;
 
 uniform float normal_threshold1 <
 	ui_label = "Normal Threshold";
@@ -213,7 +243,7 @@ uniform float normal_threshold1 <
 	ui_category_closed = true;
 	ui_min = 0;
 	ui_max = 4;
-> = 2.5;
+> = 1.5;
 
 uniform float color_threshold <
 	ui_label = "Color Threshold";
@@ -550,10 +580,10 @@ float4 MedianPS(in float4 Position : SV_Position, in float4 Offsets[3] : TEXCOOR
 float4 TA( float4 Position : SV_Position, float2 texcoord : TEXCOORD0) : SV_Target
 {
 	float2 velocity = 0;
-#if exists("MotionVectors.fxh")
-	velocity = sampleMotion(texcoord).xy;
-#endif
-	float roughness = tex2D(sRoughnessTex, texcoord).r;
+	
+           velocity = sampleMotion(texcoord);
+
+    float roughness = tex2D(sRoughnessTex, texcoord).r;
 	
 	float4 current = tex2D( sTASSRTex, texcoord ).rgba;
 	float4 history = tex2D( sTSTex1, texcoord + velocity).rgba;
